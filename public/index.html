@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Roblox Place Publisher</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="https://unpkg.com/lucide@latest" defer></script>
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <i data-lucide="cloud-upload"></i>
+          </div>
+          <div>
+            <h1>Place Publisher</h1>
+            <p>Roblox Open Cloud</p>
+          </div>
+        </div>
+
+        <a class="docs-link" href="https://create.roblox.com/docs/cloud/guides/usage-place-publishing" target="_blank" rel="noreferrer">
+          <i data-lucide="book-open"></i>
+          <span>Docs</span>
+        </a>
+      </header>
+
+      <main class="workspace">
+        <section class="panel publish-panel" aria-labelledby="publish-title">
+          <div class="panel-heading">
+            <div>
+              <h2 id="publish-title">Quick Publish</h2>
+              <p>Use an API key with <strong>universe-places:write</strong>.</p>
+            </div>
+            <span class="status-pill neutral" id="statusPill">Ready</span>
+          </div>
+
+          <form id="publishForm" novalidate>
+            <div class="field">
+              <label for="apiKey">API key</label>
+              <div class="secret-field">
+                <input id="apiKey" name="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="RBX-...">
+                <button class="icon-button" id="toggleKey" type="button" aria-label="Show API key" title="Show API key">
+                  <i data-lucide="eye"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="field-grid two">
+              <div class="field">
+                <label for="universeId">Universe ID</label>
+                <div class="lookup-field">
+                  <input id="universeId" name="universeId" inputmode="numeric" pattern="[0-9]*" placeholder="0000000000">
+                  <button class="icon-button fetch-button" id="fetchPlaces" type="button" aria-label="Find places" title="Find places">
+                    <i data-lucide="search"></i>
+                  </button>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="placeId">Manual Place ID</label>
+                <input id="placeId" name="placeId" inputmode="numeric" pattern="[0-9]*" placeholder="1111111111">
+              </div>
+            </div>
+
+            <section class="places-picker" aria-labelledby="places-title">
+              <div class="places-toolbar">
+                <div>
+                  <h3 id="places-title">Associated Places</h3>
+                  <p id="placesHint">Find places from the Universe ID, then choose targets.</p>
+                </div>
+                <label class="toggle select-all-toggle">
+                  <input id="selectAllPlaces" type="checkbox" disabled>
+                  <span>Select all</span>
+                </label>
+              </div>
+              <div class="places-list empty" id="placesList">
+                <span>No places loaded.</span>
+              </div>
+            </section>
+
+            <div class="field-grid two">
+              <div class="field">
+                <label>Version type</label>
+                <div class="segmented" role="radiogroup" aria-label="Version type">
+                  <label>
+                    <input type="radio" name="versionType" value="Published" checked>
+                    <span>Published</span>
+                  </label>
+                  <label>
+                    <input type="radio" name="versionType" value="Saved">
+                    <span>Saved</span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="contentType">Content type</label>
+                <select id="contentType" name="contentType">
+                  <option value="auto">Auto from file</option>
+                  <option value="application/octet-stream">Binary .rbxl</option>
+                  <option value="application/xml">XML .rbxlx</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="file-zone" id="fileZone">
+              <input id="placeFile" name="placeFile" type="file" accept=".rbxl,.rbxlx">
+              <i data-lucide="file-up"></i>
+              <div>
+                <strong id="fileTitle">Choose a place file</strong>
+                <span id="fileMeta">.rbxl or .rbxlx</span>
+              </div>
+            </div>
+
+            <div class="options-row">
+              <label class="toggle">
+                <input id="rememberIds" type="checkbox">
+                <span>Remember IDs</span>
+              </label>
+
+              <label class="toggle">
+                <input id="rememberToken" type="checkbox">
+                <span>Remember token</span>
+              </label>
+
+              <div class="checks" aria-label="Request facts">
+                <span>.rbxl</span>
+                <span>.rbxlx</span>
+                <span>30/min</span>
+              </div>
+            </div>
+
+            <div class="form-errors" id="formErrors" aria-live="polite"></div>
+
+            <div class="actions">
+              <button class="primary-button" id="publishButton" type="submit" disabled>
+                <i data-lucide="rocket"></i>
+                <span>Publish</span>
+              </button>
+              <button class="secondary-button" id="copyCurl" type="button">
+                <i data-lucide="copy"></i>
+                <span>Copy curl</span>
+              </button>
+              <button class="ghost-button" id="resetForm" type="button">
+                <i data-lucide="rotate-ccw"></i>
+                <span>Reset</span>
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <aside class="side-stack" aria-label="Request and response">
+          <section class="panel preview-panel" aria-labelledby="request-title">
+            <div class="panel-heading compact">
+              <h2 id="request-title">Request</h2>
+              <span class="method">POST</span>
+            </div>
+            <dl class="request-facts">
+              <div>
+                <dt>Endpoint</dt>
+                <dd id="endpointText">Waiting for IDs</dd>
+              </div>
+              <div>
+                <dt>Content type</dt>
+                <dd id="contentTypeText">Waiting for file</dd>
+              </div>
+              <div>
+                <dt>Targets</dt>
+                <dd id="targetText">Waiting for place selection</dd>
+              </div>
+            </dl>
+            <pre class="code-preview" id="curlPreview"></pre>
+          </section>
+
+          <section class="panel response-panel" aria-labelledby="response-title">
+            <div class="panel-heading compact">
+              <h2 id="response-title">Response</h2>
+              <a id="dashboardLink" href="https://create.roblox.com/dashboard/creations" target="_blank" rel="noreferrer">
+                <i data-lucide="external-link"></i>
+                <span>Dashboard</span>
+              </a>
+            </div>
+            <div class="response-empty" id="responseEmpty">
+              <i data-lucide="square-terminal"></i>
+              <span>No publish attempt yet.</span>
+            </div>
+            <pre class="response-output" id="responseOutput" hidden></pre>
+          </section>
+        </aside>
+      </main>
+    </div>
+  </body>
+</html>
