@@ -4,7 +4,9 @@
   "private": true,
   "description": "Local interface for publishing Roblox place files with Open Cloud.",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "package:portable": "node scripts/build-portable.mjs",
+    "package:portable:win": "node scripts/build-portable.mjs --target win-x64"
   },
   "engines": {
     "node": ">=18"

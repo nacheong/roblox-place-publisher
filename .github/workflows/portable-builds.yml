@@ -1,0 +1,81 @@
+name: Portable builds
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+    paths:
+      - ".github/workflows/portable-builds.yml"
+      - "public/**"
+      - "scripts/build-portable.mjs"
+      - "server.js"
+      - "package.json"
+      - "README.md"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - win-x64
+          - linux-x64
+          - macos-x64
+          - macos-arm64
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check server.js
+          node --check public/app.js
+          node --check scripts/build-portable.mjs
+
+      - name: Build portable package
+        run: node scripts/build-portable.mjs --target "${{ matrix.target }}"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: roblox-place-publisher-${{ matrix.target }}
+          path: dist/roblox-place-publisher-${{ matrix.target }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Attach packages to release
+    needs: package
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" release-artifacts/*.zip --clobber
+          else
+            gh release create "$TAG_NAME" release-artifacts/*.zip --title "$TAG_NAME" --generate-notes
+          fi

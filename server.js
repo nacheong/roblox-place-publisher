@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
+const { spawn } = require("node:child_process");
 const { URL } = require("node:url");
 
 const HOST = process.env.HOST || "127.0.0.1";
@@ -14,6 +15,21 @@ const MIME_TYPES = new Map([
   [".json", "application/json; charset=utf-8"],
   [".svg", "image/svg+xml; charset=utf-8"]
 ]);
+
+function openBrowser(url) {
+  const command = process.platform === "win32" ? "cmd" : process.platform === "darwin" ? "open" : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
+
+  try {
+    const child = spawn(command, args, {
+      detached: true,
+      stdio: "ignore"
+    });
+    child.unref();
+  } catch (error) {
+    console.warn(`Unable to open browser automatically: ${error instanceof Error ? error.message : error}`);
+  }
+}
 
 function sendJson(res, status, payload) {
   const body = JSON.stringify(payload, null, 2);
@@ -474,5 +490,10 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Roblox Place Publisher running at http://${HOST}:${PORT}`);
+  const url = `http://${HOST}:${PORT}`;
+  console.log(`Roblox Place Publisher running at ${url}`);
+
+  if (process.env.OPEN_BROWSER === "1") {
+    openBrowser(url);
+  }
 });

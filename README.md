@@ -6,7 +6,6 @@ The app runs on your machine, can find places associated with a Universe ID, and
 
 ## Requirements
 
-- Node.js 18 or newer
 - Roblox Open Cloud API key with:
   - `universe-places:write`
   - `legacy-asset:manage`
@@ -14,6 +13,26 @@ The app runs on your machine, can find places associated with a Universe ID, and
 - Optional: a `.rbxl` or `.rbxlx` place file if you use **Local file** mode
 
 ## Launch
+
+### Portable Download
+
+Download the portable build for your operating system from GitHub Releases, unzip it, and run the launcher:
+
+- Windows: `Launch Roblox Place Publisher.cmd`
+- macOS: `Launch Roblox Place Publisher.command`
+- Linux: `launch-roblox-place-publisher.sh`
+
+The portable builds include Node.js, so developers do not need to install Node.js or npm.
+
+The launcher opens:
+
+```text
+http://127.0.0.1:4173
+```
+
+### From Source
+
+Source launches require Node.js 18 or newer.
 
 ```bash
 npm start
@@ -80,8 +99,20 @@ server.js           Local HTTP server and Roblox API proxy
 public/index.html   App markup
 public/styles.css   App styles
 public/app.js       Client-side validation, place lookup, storage, and publish flow
+scripts/            Portable package builder
+.github/workflows/  GitHub Actions portable release builds
 package.json        npm launch script
 ```
+
+## Portable Builds
+
+Maintainers can create portable zips locally:
+
+```bash
+npm run package:portable
+```
+
+GitHub Actions also builds portable packages for Windows, Linux, and macOS on pushes to `main`. Version tags like `v1.0.1` attach the zips to a GitHub Release.
 
 ## Troubleshooting
 
