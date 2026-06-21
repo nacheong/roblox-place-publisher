@@ -29,10 +29,10 @@
 
       <main class="workspace">
         <section class="panel publish-panel" aria-labelledby="publish-title">
-          <div class="panel-heading">
+            <div class="panel-heading">
             <div>
               <h2 id="publish-title">Quick Publish</h2>
-              <p>Use an API key with <strong>universe-places:write</strong>.</p>
+              <p>Use an API key with <strong>universe-places:write</strong> and <strong>legacy-asset:manage</strong>.</p>
             </div>
             <span class="status-pill neutral" id="statusPill">Ready</span>
           </div>
@@ -81,6 +81,20 @@
               </div>
             </section>
 
+            <div class="field">
+              <label>Publish source</label>
+              <div class="segmented source-segmented" role="radiogroup" aria-label="Publish source">
+                <label>
+                  <input type="radio" name="publishSource" value="current" checked>
+                  <span>Current Roblox version</span>
+                </label>
+                <label>
+                  <input type="radio" name="publishSource" value="file">
+                  <span>Local file</span>
+                </label>
+              </div>
+            </div>
+
             <div class="field-grid two">
               <div class="field">
                 <label>Version type</label>
@@ -111,7 +125,7 @@
               <i data-lucide="file-up"></i>
               <div>
                 <strong id="fileTitle">Choose a place file</strong>
-                <span id="fileMeta">.rbxl or .rbxlx</span>
+                <span id="fileMeta">Optional fallback: .rbxl or .rbxlx</span>
               </div>
             </div>
 
@@ -166,6 +180,10 @@
               <div>
                 <dt>Content type</dt>
                 <dd id="contentTypeText">Waiting for file</dd>
+              </div>
+              <div>
+                <dt>Source</dt>
+                <dd id="sourceText">Current Roblox version</dd>
               </div>
               <div>
                 <dt>Targets</dt>

@@ -80,6 +80,38 @@ function validatePublishRequest(req, searchParams) {
   };
 }
 
+function validateCurrentPublishRequest(req, searchParams) {
+  const apiKey = req.headers["x-api-key"];
+  const universeId = (searchParams.get("universeId") || "").trim();
+  const placeId = (searchParams.get("placeId") || "").trim();
+  const versionType = (searchParams.get("versionType") || "Published").trim();
+  const errors = [];
+
+  if (!apiKey || Array.isArray(apiKey)) {
+    errors.push("API key is required.");
+  }
+
+  if (!/^\d+$/.test(universeId)) {
+    errors.push("Universe ID must be a number.");
+  }
+
+  if (!/^\d+$/.test(placeId)) {
+    errors.push("Place ID must be a number.");
+  }
+
+  if (!["Published", "Saved"].includes(versionType)) {
+    errors.push("Version type must be Published or Saved.");
+  }
+
+  return {
+    apiKey,
+    universeId,
+    placeId,
+    versionType,
+    errors
+  };
+}
+
 function normalizePlace(place) {
   const pathMatch = typeof place.path === "string" ? place.path.match(/\/?places\/(\d+)/) : null;
   const id = place.id ?? place.placeId ?? (pathMatch ? pathMatch[1] : undefined);
@@ -216,6 +248,81 @@ async function handlePlaces(req, res, requestUrl) {
   });
 }
 
+async function publishToRoblox({ apiKey, universeId, placeId, versionType, contentType, body }) {
+  const endpoint = `https://apis.roblox.com/universes/v1/${universeId}/places/${placeId}/versions?versionType=${encodeURIComponent(versionType)}`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "x-api-key": apiKey,
+      "content-type": contentType
+    },
+    body,
+    duplex: "half"
+  });
+  const text = await response.text();
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    statusText: response.statusText,
+    endpoint,
+    contentType,
+    versionType,
+    body: parseMaybeJson(text)
+  };
+}
+
+async function downloadCurrentPlaceFile(apiKey, placeId) {
+  const assetDeliveryEndpoint = `https://apis.roblox.com/asset-delivery-api/v1/assetId/${placeId}`;
+  const assetResponse = await fetch(assetDeliveryEndpoint, {
+    headers: {
+      "accept": "application/json",
+      "x-api-key": apiKey
+    }
+  });
+  const assetText = await assetResponse.text();
+  const assetBody = parseMaybeJson(assetText);
+
+  if (!assetResponse.ok || !assetBody?.location) {
+    return {
+      ok: false,
+      status: assetResponse.status,
+      statusText: assetResponse.statusText,
+      assetDeliveryEndpoint,
+      body: assetBody
+    };
+  }
+
+  const contentResponse = await fetch(assetBody.location, {
+    headers: {
+      "accept": "application/octet-stream"
+    }
+  });
+
+  if (!contentResponse.ok) {
+    const text = await contentResponse.text();
+    return {
+      ok: false,
+      status: contentResponse.status,
+      statusText: contentResponse.statusText,
+      assetDeliveryEndpoint,
+      body: parseMaybeJson(text)
+    };
+  }
+
+  const arrayBuffer = await contentResponse.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    assetDeliveryEndpoint,
+    contentBytes: buffer.length,
+    buffer
+  };
+}
+
 async function handlePublish(req, res, requestUrl) {
   const validation = validatePublishRequest(req, requestUrl.searchParams);
 
@@ -228,37 +335,79 @@ async function handlePublish(req, res, requestUrl) {
     return;
   }
 
-  const endpoint = `https://apis.roblox.com/universes/v1/${validation.universeId}/places/${validation.placeId}/versions?versionType=${encodeURIComponent(validation.versionType)}`;
-
   try {
-    const upstreamResponse = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "x-api-key": validation.apiKey,
-        "content-type": validation.contentType
-      },
-      body: req,
-      duplex: "half"
+    const result = await publishToRoblox({
+      apiKey: validation.apiKey,
+      universeId: validation.universeId,
+      placeId: validation.placeId,
+      versionType: validation.versionType,
+      contentType: validation.contentType,
+      body: req
     });
 
-    const text = await upstreamResponse.text();
+    sendJson(res, result.status, result);
+  } catch (error) {
+    sendJson(res, 502, {
+      ok: false,
+      status: 502,
+      statusText: "Bad Gateway",
+      message: error instanceof Error ? error.message : "Unable to reach Roblox Open Cloud."
+    });
+  }
+}
 
-    sendJson(res, upstreamResponse.status, {
-      ok: upstreamResponse.ok,
-      status: upstreamResponse.status,
-      statusText: upstreamResponse.statusText,
-      endpoint,
-      contentType: validation.contentType,
+async function handlePublishCurrent(req, res, requestUrl) {
+  const validation = validateCurrentPublishRequest(req, requestUrl.searchParams);
+
+  if (validation.errors.length > 0) {
+    req.resume();
+    sendJson(res, 400, {
+      ok: false,
+      errors: validation.errors
+    });
+    return;
+  }
+
+  req.resume();
+
+  try {
+    const currentFile = await downloadCurrentPlaceFile(validation.apiKey, validation.placeId);
+
+    if (!currentFile.ok) {
+      sendJson(res, currentFile.status || 502, {
+        ok: false,
+        status: currentFile.status || 502,
+        statusText: currentFile.statusText || "Asset delivery failed",
+        source: "currentRobloxVersion",
+        assetDeliveryEndpoint: currentFile.assetDeliveryEndpoint,
+        body: currentFile.body,
+        message: "Unable to download the current Roblox place asset. The API key may need legacy-asset:manage."
+      });
+      return;
+    }
+
+    const result = await publishToRoblox({
+      apiKey: validation.apiKey,
+      universeId: validation.universeId,
+      placeId: validation.placeId,
       versionType: validation.versionType,
-      body: parseMaybeJson(text)
+      contentType: "application/octet-stream",
+      body: currentFile.buffer
+    });
+
+    sendJson(res, result.status, {
+      ...result,
+      source: "currentRobloxVersion",
+      assetDeliveryEndpoint: currentFile.assetDeliveryEndpoint,
+      contentBytes: currentFile.contentBytes
     });
   } catch (error) {
     sendJson(res, 502, {
       ok: false,
       status: 502,
       statusText: "Bad Gateway",
-      endpoint,
-      message: error instanceof Error ? error.message : "Unable to reach Roblox Open Cloud."
+      source: "currentRobloxVersion",
+      message: error instanceof Error ? error.message : "Unable to publish current Roblox version."
     });
   }
 }
@@ -307,6 +456,11 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "POST" && requestUrl.pathname === "/api/publish") {
     handlePublish(req, res, requestUrl);
+    return;
+  }
+
+  if (req.method === "POST" && requestUrl.pathname === "/api/publish-current") {
+    handlePublishCurrent(req, res, requestUrl);
     return;
   }
 

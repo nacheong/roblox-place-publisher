@@ -320,6 +320,11 @@ select:focus,
   border-radius: 6px;
 }
 
+.source-segmented span {
+  padding: 0 8px;
+  text-align: center;
+}
+
 .places-picker {
   display: grid;
   gap: 12px;
@@ -433,6 +438,10 @@ select:focus,
   transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
 }
 
+.file-zone.hidden {
+  display: none;
+}
+
 .file-zone.dragging {
   border-color: var(--green);
   background: var(--green-soft);
@@ -505,6 +514,14 @@ select:focus,
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 800;
+}
+
+.field.is-disabled {
+  opacity: 0.72;
+}
+
+.field.is-disabled select {
+  background: var(--panel-strong);
 }
 
 .form-errors {

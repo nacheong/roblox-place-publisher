@@ -24,6 +24,7 @@ const els = {
   statusPill: document.querySelector("#statusPill"),
   endpointText: document.querySelector("#endpointText"),
   contentTypeText: document.querySelector("#contentTypeText"),
+  sourceText: document.querySelector("#sourceText"),
   targetText: document.querySelector("#targetText"),
   curlPreview: document.querySelector("#curlPreview"),
   responseEmpty: document.querySelector("#responseEmpty"),
@@ -40,6 +41,10 @@ let lastFetchedUniverseId = "";
 
 function getVersionType() {
   return document.querySelector("input[name='versionType']:checked")?.value || "Published";
+}
+
+function getPublishSource() {
+  return document.querySelector("input[name='publishSource']:checked")?.value || "current";
 }
 
 function inferContentType(file) {
@@ -61,6 +66,10 @@ function inferContentType(file) {
 }
 
 function getEffectiveContentType() {
+  if (getPublishSource() === "current") {
+    return "application/octet-stream";
+  }
+
   return els.contentType.value === "auto" ? inferContentType(selectedFile) : els.contentType.value;
 }
 
@@ -128,12 +137,35 @@ function buildLocalPublishUrl(placeId) {
   return `/api/publish?${params.toString()}`;
 }
 
+function buildCurrentPublishUrl(placeId) {
+  const params = new URLSearchParams({
+    universeId: els.universeId.value.trim(),
+    placeId,
+    versionType: getVersionType()
+  });
+
+  return `/api/publish-current?${params.toString()}`;
+}
+
 function buildCurl() {
   const targets = getPublishTargets();
-  const endpoint = buildEndpoint() || "https://apis.roblox.com/universes/v1/{universeId}/places/{placeId}/versions?versionType=Published";
+  const previewPlaceId = getPreviewPlaceId();
+  const endpoint = buildEndpoint(previewPlaceId) || "https://apis.roblox.com/universes/v1/{universeId}/places/{placeId}/versions?versionType=Published";
   const contentType = getEffectiveContentType() || "application/octet-stream";
   const fileName = selectedFile?.name || "place.rbxl";
   const prefix = targets.length > 1 ? `# Repeat for selected Place IDs: ${targets.join(", ")}\n` : "";
+
+  if (getPublishSource() === "current") {
+    const universeId = els.universeId.value.trim() || "{universeId}";
+    const placeId = previewPlaceId || "{placeId}";
+    const versionType = encodeURIComponent(getVersionType());
+
+    return `${prefix}${[
+      "# App workflow: download the current Roblox place asset, then publish those bytes.",
+      `curl --location --request POST "http://127.0.0.1:4173/api/publish-current?universeId=${universeId}&placeId=${placeId}&versionType=${versionType}" \\`,
+      `  --header "x-api-key: $ROBLOX_API_KEY"`
+    ].join("\n")}`;
+  }
 
   return `${prefix}${[
     `curl --location --request POST "${endpoint}" \\`,
@@ -154,6 +186,7 @@ function saveSettings() {
 
   const settings = {
     versionType: getVersionType(),
+    publishSource: getPublishSource(),
     contentType: els.contentType.value,
     rememberIds,
     rememberToken
@@ -194,6 +227,11 @@ function loadSettings() {
     if (versionInput) {
       versionInput.checked = true;
     }
+
+    const sourceInput = document.querySelector(`input[name='publishSource'][value='${settings.publishSource || "current"}']`);
+    if (sourceInput) {
+      sourceInput.checked = true;
+    }
   } catch {
     localStorage.removeItem(STORAGE_KEY);
   }
@@ -215,6 +253,21 @@ function setResponse(payload, tone) {
     els.responseOutput.style.borderColor = "#f3b8b2";
   } else {
     els.responseOutput.style.borderColor = "";
+  }
+}
+
+function updatePublishSourceUi() {
+  const isCurrentSource = getPublishSource() === "current";
+  const contentTypeField = els.contentType.closest(".field");
+
+  els.fileZone.classList.toggle("hidden", isCurrentSource);
+  els.contentType.disabled = isCurrentSource;
+  contentTypeField?.classList.toggle("is-disabled", isCurrentSource);
+
+  if (isCurrentSource) {
+    els.fileMeta.textContent = "Using the current Roblox asset for each selected place.";
+  } else if (!selectedFile) {
+    els.fileMeta.textContent = "Optional fallback: .rbxl or .rbxlx";
   }
 }
 
@@ -349,6 +402,7 @@ function validate(showErrors = false) {
   const manualPlaceId = els.placeId.value.trim();
   const contentType = getEffectiveContentType();
   const targets = getPublishTargets();
+  const isFileSource = getPublishSource() === "file";
 
   if (!els.apiKey.value.trim()) {
     errors.push("Enter an API key.");
@@ -366,11 +420,11 @@ function validate(showErrors = false) {
     errors.push("Select at least one associated place or enter a manual Place ID.");
   }
 
-  if (!selectedFile) {
+  if (isFileSource && !selectedFile) {
     errors.push("Select a .rbxl or .rbxlx file.");
   }
 
-  if (selectedFile && !contentType) {
+  if (isFileSource && selectedFile && !contentType) {
     errors.push("Choose a content type for this file.");
   }
 
@@ -388,9 +442,11 @@ function updatePreview() {
   const endpoint = buildEndpoint();
   const contentType = getEffectiveContentType();
   const targets = getPublishTargets();
+  const isCurrentSource = getPublishSource() === "current";
 
   els.endpointText.textContent = endpoint.includes("{selectedPlaceId}") ? "Multiple selected place endpoints" : endpoint || "Waiting for IDs";
-  els.contentTypeText.textContent = contentType || "Waiting for file";
+  els.contentTypeText.textContent = isCurrentSource ? "application/octet-stream" : contentType || "Waiting for file";
+  els.sourceText.textContent = isCurrentSource ? "Current Roblox version" : "Local file upload";
   els.targetText.textContent = describeTargets(targets);
   els.curlPreview.textContent = buildCurl();
 
@@ -419,7 +475,9 @@ function updateFile(file) {
 
   if (!selectedFile) {
     els.fileTitle.textContent = "Choose a place file";
-    els.fileMeta.textContent = ".rbxl or .rbxlx";
+    els.fileMeta.textContent = getPublishSource() === "current"
+      ? "Using the current Roblox asset for each selected place."
+      : "Optional fallback: .rbxl or .rbxlx";
     validate(false);
     return;
   }
@@ -433,8 +491,9 @@ function updateFile(file) {
 async function publishPlace() {
   const errors = validate(true);
   const targets = getPublishTargets();
+  const source = getPublishSource();
 
-  if (errors.length > 0 || !selectedFile || targets.length === 0) {
+  if (errors.length > 0 || (source === "file" && !selectedFile) || targets.length === 0) {
     setStatus("Check fields", "warning");
     return;
   }
@@ -442,7 +501,7 @@ async function publishPlace() {
   isPublishing = true;
   els.publishButton.disabled = true;
   setStatus("Publishing", "warning");
-  setResponse(`Uploading to ${targets.length} place${targets.length === 1 ? "" : "s"}...`, "neutral");
+  setResponse(`${source === "current" ? "Publishing current Roblox version" : "Uploading local file"} to ${targets.length} place${targets.length === 1 ? "" : "s"}...`, "neutral");
 
   const results = [];
 
@@ -450,20 +509,27 @@ async function publishPlace() {
     setStatus(`${index + 1}/${targets.length}`, "warning");
 
     try {
-      const response = await fetch(buildLocalPublishUrl(placeId), {
+      const headers = {
+        "x-api-key": els.apiKey.value.trim()
+      };
+      const request = {
         method: "POST",
-        headers: {
-          "x-api-key": els.apiKey.value.trim(),
-          "content-type": getEffectiveContentType()
-        },
-        body: selectedFile
-      });
+        headers
+      };
+
+      if (source === "file") {
+        headers["content-type"] = getEffectiveContentType();
+        request.body = selectedFile;
+      }
+
+      const response = await fetch(source === "current" ? buildCurrentPublishUrl(placeId) : buildLocalPublishUrl(placeId), request);
 
       const payload = await response.json();
       const versionNumber = payload.body?.versionNumber ?? payload.body;
 
       results.push({
         placeId,
+        source,
         ok: response.ok && payload.ok,
         status: payload.status || response.status,
         versionNumber,
@@ -472,6 +538,7 @@ async function publishPlace() {
     } catch (error) {
       results.push({
         placeId,
+        source,
         ok: false,
         message: error instanceof Error ? error.message : "Publish failed."
       });
@@ -485,6 +552,7 @@ async function publishPlace() {
   setResponse({
     ok: allOk,
     universeId: els.universeId.value.trim(),
+    source,
     versionType: getVersionType(),
     targets: results.length,
     succeeded,
@@ -507,6 +575,7 @@ function resetForm() {
   localStorage.removeItem(STORAGE_KEY);
   clearPlaces();
   updateFile(null);
+  updatePublishSourceUi();
 }
 
 function bindEvents() {
@@ -587,10 +656,18 @@ function bindEvents() {
   document.querySelectorAll("input[name='versionType']").forEach((element) => {
     element.addEventListener("change", () => validate(false));
   });
+
+  document.querySelectorAll("input[name='publishSource']").forEach((element) => {
+    element.addEventListener("change", () => {
+      updatePublishSourceUi();
+      validate(false);
+    });
+  });
 }
 
 loadSettings();
 bindEvents();
+updatePublishSourceUi();
 renderPlaces();
 updatePreview();
 validate(false);
