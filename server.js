@@ -128,6 +128,37 @@ function validateCurrentPublishRequest(req, searchParams) {
   };
 }
 
+function getVersionNumber(assetVersion) {
+  if (assetVersion?.versionNumber !== undefined) {
+    return Number(assetVersion.versionNumber);
+  }
+
+  if (assetVersion?.revisionId !== undefined) {
+    return Number(assetVersion.revisionId);
+  }
+
+  const pathMatch = typeof assetVersion?.path === "string" ? assetVersion.path.match(/\/versions\/(\d+)$/) : null;
+  return pathMatch ? Number(pathMatch[1]) : NaN;
+}
+
+function getAssetVersions(body) {
+  if (Array.isArray(body)) {
+    return body;
+  }
+
+  for (const key of ["assetVersions", "versions", "data"]) {
+    if (Array.isArray(body?.[key])) {
+      return body[key];
+    }
+  }
+
+  return [];
+}
+
+function getNextPageToken(body) {
+  return body?.nextPageToken || body?.nextPageCursor || "";
+}
+
 function normalizePlace(place) {
   const pathMatch = typeof place.path === "string" ? place.path.match(/\/?places\/(\d+)/) : null;
   const id = place.id ?? place.placeId ?? (pathMatch ? pathMatch[1] : undefined);
@@ -288,8 +319,83 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, conte
   };
 }
 
-async function downloadCurrentPlaceFile(apiKey, placeId) {
-  const assetDeliveryEndpoint = `https://apis.roblox.com/asset-delivery-api/v1/assetId/${placeId}`;
+async function fetchPlaceVersions(apiKey, placeId) {
+  const versions = [];
+  const attempts = [];
+  let pageToken = "";
+  let pages = 0;
+
+  do {
+    const url = new URL(`https://apis.roblox.com/assets/v1/assets/${placeId}/versions`);
+    url.searchParams.set("maxPageSize", "50");
+
+    if (pageToken) {
+      url.searchParams.set("pageToken", pageToken);
+    }
+
+    const response = await fetch(url, {
+      headers: {
+        "accept": "application/json",
+        "x-api-key": apiKey
+      }
+    });
+    const text = await response.text();
+    const body = parseMaybeJson(text);
+
+    attempts.push({
+      endpoint: url.toString(),
+      status: response.status,
+      statusText: response.statusText
+    });
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        statusText: response.statusText,
+        body,
+        attempts
+      };
+    }
+
+    versions.push(...getAssetVersions(body));
+    pageToken = getNextPageToken(body);
+    pages += 1;
+  } while (pageToken && pages < 10);
+
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    versions,
+    attempts
+  };
+}
+
+function findLatestSavedPlaceVersion(versions) {
+  const normalizedVersions = versions
+    .map((version) => ({
+      ...version,
+      versionNumber: getVersionNumber(version)
+    }))
+    .filter((version) => Number.isFinite(version.versionNumber));
+  const latestPublishedVersionNumber = normalizedVersions
+    .filter((version) => version.published === true)
+    .reduce((latest, version) => Math.max(latest, version.versionNumber), 0);
+  const savedVersion = normalizedVersions
+    .filter((version) => version.published === false && version.versionNumber > latestPublishedVersionNumber)
+    .sort((a, b) => b.versionNumber - a.versionNumber)[0] || null;
+
+  return {
+    savedVersion,
+    latestPublishedVersionNumber
+  };
+}
+
+async function downloadPlaceFileFromAssetDelivery(apiKey, placeId, versionNumber) {
+  const assetDeliveryEndpoint = versionNumber
+    ? `https://apis.roblox.com/asset-delivery-api/v1/assetId/${placeId}/version/${versionNumber}`
+    : `https://apis.roblox.com/asset-delivery-api/v1/assetId/${placeId}`;
   const assetResponse = await fetch(assetDeliveryEndpoint, {
     headers: {
       "accept": "application/json",
@@ -334,9 +440,14 @@ async function downloadCurrentPlaceFile(apiKey, placeId) {
     status: 200,
     statusText: "OK",
     assetDeliveryEndpoint,
+    versionNumber: versionNumber || null,
     contentBytes: buffer.length,
     buffer
   };
+}
+
+async function downloadCurrentPlaceFile(apiKey, placeId) {
+  return downloadPlaceFileFromAssetDelivery(apiKey, placeId);
 }
 
 async function handlePublish(req, res, requestUrl) {
@@ -428,6 +539,96 @@ async function handlePublishCurrent(req, res, requestUrl) {
   }
 }
 
+async function handlePublishLatestSaved(req, res, requestUrl) {
+  const validation = validateCurrentPublishRequest(req, requestUrl.searchParams);
+
+  if (validation.errors.length > 0) {
+    req.resume();
+    sendJson(res, 400, {
+      ok: false,
+      errors: validation.errors
+    });
+    return;
+  }
+
+  req.resume();
+
+  try {
+    const versionList = await fetchPlaceVersions(validation.apiKey, validation.placeId);
+
+    if (!versionList.ok) {
+      sendJson(res, versionList.status || 502, {
+        ok: false,
+        status: versionList.status || 502,
+        statusText: versionList.statusText || "Asset versions failed",
+        source: "latestSavedVersion",
+        body: versionList.body,
+        attempts: versionList.attempts,
+        message: "Unable to list place versions. The API key may need asset:read."
+      });
+      return;
+    }
+
+    const { savedVersion, latestPublishedVersionNumber } = findLatestSavedPlaceVersion(versionList.versions);
+
+    if (!savedVersion) {
+      sendJson(res, 409, {
+        ok: false,
+        status: 409,
+        statusText: "No saved version found",
+        source: "latestSavedVersion",
+        checkedVersions: versionList.versions.length,
+        latestPublishedVersionNumber,
+        attempts: versionList.attempts,
+        message: "No unpublished saved place version newer than the latest published version was found. Run Studio Update All or Save first, then try again."
+      });
+      return;
+    }
+
+    const savedFile = await downloadPlaceFileFromAssetDelivery(validation.apiKey, validation.placeId, savedVersion.versionNumber);
+
+    if (!savedFile.ok) {
+      sendJson(res, savedFile.status || 502, {
+        ok: false,
+        status: savedFile.status || 502,
+        statusText: savedFile.statusText || "Asset delivery failed",
+        source: "latestSavedVersion",
+        sourceVersionNumber: savedVersion.versionNumber,
+        assetDeliveryEndpoint: savedFile.assetDeliveryEndpoint,
+        body: savedFile.body,
+        message: "Unable to download the latest saved place version. The API key may need legacy-asset:manage."
+      });
+      return;
+    }
+
+    const result = await publishToRoblox({
+      apiKey: validation.apiKey,
+      universeId: validation.universeId,
+      placeId: validation.placeId,
+      versionType: validation.versionType,
+      contentType: "application/octet-stream",
+      body: savedFile.buffer
+    });
+
+    sendJson(res, result.status, {
+      ...result,
+      source: "latestSavedVersion",
+      sourceVersionNumber: savedVersion.versionNumber,
+      sourceAssetVersion: savedVersion,
+      assetDeliveryEndpoint: savedFile.assetDeliveryEndpoint,
+      contentBytes: savedFile.contentBytes
+    });
+  } catch (error) {
+    sendJson(res, 502, {
+      ok: false,
+      status: 502,
+      statusText: "Bad Gateway",
+      source: "latestSavedVersion",
+      message: error instanceof Error ? error.message : "Unable to publish latest saved place version."
+    });
+  }
+}
+
 function serveStatic(req, res, requestUrl) {
   const pathname = requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname;
   const decodedPath = decodeURIComponent(pathname);
@@ -477,6 +678,11 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "POST" && requestUrl.pathname === "/api/publish-current") {
     handlePublishCurrent(req, res, requestUrl);
+    return;
+  }
+
+  if (req.method === "POST" && requestUrl.pathname === "/api/publish-latest-saved") {
+    handlePublishLatestSaved(req, res, requestUrl);
     return;
   }
 

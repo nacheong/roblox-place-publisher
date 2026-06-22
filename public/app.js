@@ -45,7 +45,7 @@ function getVersionType() {
 }
 
 function getPublishSource() {
-  return document.querySelector("input[name='publishSource']:checked")?.value || "file";
+  return document.querySelector("input[name='publishSource']:checked")?.value || "saved";
 }
 
 function inferContentType(file) {
@@ -67,7 +67,7 @@ function inferContentType(file) {
 }
 
 function getEffectiveContentType() {
-  if (getPublishSource() === "current") {
+  if (getPublishSource() !== "file") {
     return "application/octet-stream";
   }
 
@@ -148,6 +148,16 @@ function buildCurrentPublishUrl(placeId) {
   return `/api/publish-current?${params.toString()}`;
 }
 
+function buildSavedPublishUrl(placeId) {
+  const params = new URLSearchParams({
+    universeId: els.universeId.value.trim(),
+    placeId,
+    versionType: getVersionType()
+  });
+
+  return `/api/publish-latest-saved?${params.toString()}`;
+}
+
 function buildCurl() {
   const targets = getPublishTargets();
   const previewPlaceId = getPreviewPlaceId();
@@ -155,6 +165,18 @@ function buildCurl() {
   const contentType = getEffectiveContentType() || "application/octet-stream";
   const fileName = selectedFile?.name || "place.rbxl";
   const prefix = targets.length > 1 ? `# Repeat for selected Place IDs: ${targets.join(", ")}\n` : "";
+
+  if (getPublishSource() === "saved") {
+    const universeId = els.universeId.value.trim() || "{universeId}";
+    const placeId = previewPlaceId || "{placeId}";
+    const versionType = encodeURIComponent(getVersionType());
+
+    return `${prefix}${[
+      "# App workflow: list place versions, download the newest saved/unpublished version, then publish those bytes.",
+      `curl --location --request POST "http://127.0.0.1:4173/api/publish-latest-saved?universeId=${universeId}&placeId=${placeId}&versionType=${versionType}" \\`,
+      `  --header "x-api-key: $ROBLOX_API_KEY"`
+    ].join("\n")}`;
+  }
 
   if (getPublishSource() === "current") {
     const universeId = els.universeId.value.trim() || "{universeId}";
@@ -187,7 +209,7 @@ function saveSettings() {
   }
 
   const settings = {
-    sourceModeVersion: 2,
+    sourceModeVersion: 3,
     versionType: getVersionType(),
     publishSource: getPublishSource(),
     contentType: els.contentType.value,
@@ -231,7 +253,7 @@ function loadSettings() {
       versionInput.checked = true;
     }
 
-    const publishSource = settings.sourceModeVersion === 2 ? settings.publishSource || "file" : "file";
+    const publishSource = settings.sourceModeVersion === 3 ? settings.publishSource || "saved" : "saved";
     const sourceInput = document.querySelector(`input[name='publishSource'][value='${publishSource}']`);
     if (sourceInput) {
       sourceInput.checked = true;
@@ -261,22 +283,28 @@ function setResponse(payload, tone) {
 }
 
 function updatePublishSourceUi() {
-  const isCurrentSource = getPublishSource() === "current";
+  const source = getPublishSource();
+  const isFileSource = source === "file";
   const contentTypeField = els.contentType.closest(".field");
 
-  els.fileZone.classList.toggle("hidden", isCurrentSource);
-  els.contentType.disabled = isCurrentSource;
-  contentTypeField?.classList.toggle("is-disabled", isCurrentSource);
+  els.fileZone.classList.toggle("hidden", !isFileSource);
+  els.contentType.disabled = !isFileSource;
+  contentTypeField?.classList.toggle("is-disabled", !isFileSource);
 
-  if (isCurrentSource) {
+  if (source === "saved") {
+    els.fileMeta.textContent = "Using the newest saved/unpublished place version.";
+    if (els.sourceHint) {
+      els.sourceHint.textContent = "Recommended for package rollouts: publish the newest saved version created by Studio package updates.";
+    }
+  } else if (source === "current") {
     els.fileMeta.textContent = "Using Asset Delivery copy; saved Studio/package changes may not be included.";
     if (els.sourceHint) {
-      els.sourceHint.textContent = "Advanced: re-publishes bytes returned by Asset Delivery. Use Local file for package Update All rollouts.";
+      els.sourceHint.textContent = "Advanced fallback: re-publishes the latest delivered asset copy, usually the already-published version.";
     }
   } else if (!selectedFile) {
     els.fileMeta.textContent = ".rbxl or .rbxlx from Studio";
     if (els.sourceHint) {
-      els.sourceHint.textContent = "Recommended for package rollouts: export or save the updated place file, then upload it here.";
+      els.sourceHint.textContent = "Fallback: upload an explicit .rbxl or .rbxlx file from disk.";
     }
   }
 }
@@ -452,11 +480,11 @@ function updatePreview() {
   const endpoint = buildEndpoint();
   const contentType = getEffectiveContentType();
   const targets = getPublishTargets();
-  const isCurrentSource = getPublishSource() === "current";
+  const source = getPublishSource();
 
   els.endpointText.textContent = endpoint.includes("{selectedPlaceId}") ? "Multiple selected place endpoints" : endpoint || "Waiting for IDs";
-  els.contentTypeText.textContent = isCurrentSource ? "application/octet-stream" : contentType || "Waiting for file";
-  els.sourceText.textContent = isCurrentSource ? "Asset Delivery copy" : "Local file upload";
+  els.contentTypeText.textContent = source !== "file" ? "application/octet-stream" : contentType || "Waiting for file";
+  els.sourceText.textContent = source === "saved" ? "Latest saved version" : source === "current" ? "Published asset copy" : "Local file upload";
   els.targetText.textContent = describeTargets(targets);
   els.curlPreview.textContent = buildCurl();
 
@@ -485,9 +513,11 @@ function updateFile(file) {
 
   if (!selectedFile) {
     els.fileTitle.textContent = "Choose a place file";
-    els.fileMeta.textContent = getPublishSource() === "current"
-      ? "Using Asset Delivery copy; saved Studio/package changes may not be included."
-      : ".rbxl or .rbxlx from Studio";
+    els.fileMeta.textContent = getPublishSource() === "saved"
+      ? "Using the newest saved/unpublished place version."
+      : getPublishSource() === "current"
+        ? "Using Asset Delivery copy; saved Studio/package changes may not be included."
+        : ".rbxl or .rbxlx from Studio";
     validate(false);
     return;
   }
@@ -511,7 +541,7 @@ async function publishPlace() {
   isPublishing = true;
   els.publishButton.disabled = true;
   setStatus("Publishing", "warning");
-  setResponse(`${source === "current" ? "Publishing Asset Delivery copy" : "Uploading local file"} to ${targets.length} place${targets.length === 1 ? "" : "s"}...`, "neutral");
+  setResponse(`${source === "saved" ? "Publishing latest saved version" : source === "current" ? "Publishing published asset copy" : "Uploading local file"} to ${targets.length} place${targets.length === 1 ? "" : "s"}...`, "neutral");
 
   const results = [];
 
@@ -532,7 +562,12 @@ async function publishPlace() {
         request.body = selectedFile;
       }
 
-      const response = await fetch(source === "current" ? buildCurrentPublishUrl(placeId) : buildLocalPublishUrl(placeId), request);
+      const url = source === "saved"
+        ? buildSavedPublishUrl(placeId)
+        : source === "current"
+          ? buildCurrentPublishUrl(placeId)
+          : buildLocalPublishUrl(placeId);
+      const response = await fetch(url, request);
 
       const payload = await response.json();
       const versionNumber = payload.body?.versionNumber ?? payload.body;

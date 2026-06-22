@@ -2,16 +2,16 @@
 
 A local web interface for quickly publishing Roblox places through Roblox Open Cloud.
 
-The app runs on your machine, can find places associated with a Universe ID, and publishes `.rbxl` or `.rbxlx` place files to one or more selected places.
+The app runs on your machine, can find places associated with a Universe ID, and publishes the latest saved place versions created by Studio package updates.
 
 ## Requirements
 
 - Roblox Open Cloud API key with:
   - `universe-places:write`
-- Optional for the advanced Asset Delivery copy mode:
+  - `asset:read`
   - `legacy-asset:manage`
 - Universe ID for the Roblox experience
-- A `.rbxl` or `.rbxlx` place file for the recommended **Local file** mode
+- Optional: a `.rbxl` or `.rbxlx` place file if you use **Local file** mode
 
 ## Launch
 
@@ -58,13 +58,12 @@ npm start
 2. Enter the experience's Universe ID.
 3. Click the search icon beside **Universe ID** to load associated places.
 4. Select one or more places with the checkboxes, or enter a manual Place ID.
-5. Leave **Publish source** on **Local file** for package rollouts and normal releases.
+5. Leave **Publish source** on **Latest saved version** for package rollouts.
 6. Choose `Published` or `Saved`.
-7. Select a `.rbxl` or `.rbxlx` file exported or saved from Studio.
-8. Review the generated request preview.
-9. Click **Publish**.
+7. Review the generated request preview.
+8. Click **Publish**.
 
-For package rollouts, update packages in Studio first, save or export the updated place file, then upload that file with **Published** selected.
+For package rollouts, update packages in Studio first. Studio package mass updates save the selected places without publishing them. This app then finds the newest saved, unpublished version for each selected place and publishes it.
 
 ## Token Storage
 
@@ -76,18 +75,25 @@ Use **Reset** to clear remembered IDs, remembered token, selected file state, an
 
 ## API Behavior
 
+For **Latest saved version**, the local server:
+
+1. Lists the selected place's asset versions through the Open Cloud Assets API.
+2. Finds the newest version where `published` is `false`.
+3. Downloads that exact version through Asset Delivery.
+4. Uploads those bytes to the Place Publishing API.
+
 For **Local file**, the local server forwards the selected file to:
 
 ```text
 https://apis.roblox.com/universes/v1/{universeId}/places/{placeId}/versions?versionType=Published
 ```
 
-For **Asset Delivery copy**, the local server:
+For **Published asset copy**, the local server:
 
 1. Downloads the selected place asset through Roblox Asset Delivery.
 2. Uploads those bytes to the Place Publishing API.
 
-Asset Delivery copy is advanced and may not include saved-but-unpublished Studio/package changes. Use **Local file** when you need to publish the result of Studio's package **Update All** workflow.
+Published asset copy is an advanced fallback and may not include saved-but-unpublished Studio/package changes. Use **Latest saved version** when you need to publish the result of Studio's package **Update All** workflow.
 
 Content types:
 
@@ -121,13 +127,15 @@ GitHub Actions also builds portable packages for Windows, Linux, and macOS on pu
 ## Troubleshooting
 
 - `401`: Check that your API key is valid.
-- `403`: Confirm the key has `universe-places:write`. Asset Delivery copy mode also needs `legacy-asset:manage`.
+- `403`: Confirm the key has `universe-places:write`, `asset:read`, and `legacy-asset:manage`.
+- `409`: No saved/unpublished version was found for that place. Run Studio package Update All or save the place first.
 - `404`: Verify the Universe ID and Place ID.
-- `409`: The selected place is not part of the entered universe.
+- Place not part of universe: verify the selected Universe ID and Place IDs.
 - Empty place list: verify the Universe ID, then use manual Place ID as a fallback.
 
 ## Roblox Docs
 
 - https://create.roblox.com/docs/cloud/guides/usage-place-publishing
+- https://create.roblox.com/docs/cloud/reference/features/assets
 - https://create.roblox.com/docs/cloud/reference/features/places
 - https://create.roblox.com/docs/projects/assets/packages

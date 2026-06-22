@@ -32,7 +32,7 @@
             <div class="panel-heading">
             <div>
               <h2 id="publish-title">Quick Publish</h2>
-              <p>Use an API key with <strong>universe-places:write</strong>.</p>
+              <p>Use an API key with <strong>universe-places:write</strong>, <strong>asset:read</strong>, and <strong>legacy-asset:manage</strong>.</p>
             </div>
             <span class="status-pill neutral" id="statusPill">Ready</span>
           </div>
@@ -85,15 +85,19 @@
               <label>Publish source</label>
               <div class="segmented source-segmented" role="radiogroup" aria-label="Publish source">
                 <label>
-                  <input type="radio" name="publishSource" value="file" checked>
+                  <input type="radio" name="publishSource" value="saved" checked>
+                  <span>Latest saved version</span>
+                </label>
+                <label>
+                  <input type="radio" name="publishSource" value="file">
                   <span>Local file</span>
                 </label>
                 <label>
                   <input type="radio" name="publishSource" value="current">
-                  <span>Asset Delivery copy</span>
+                  <span>Published asset copy</span>
                 </label>
               </div>
-              <p class="field-note" id="sourceHint">Recommended for package rollouts: export or save the updated place file, then upload it here.</p>
+              <p class="field-note" id="sourceHint">Recommended for package rollouts: publish the newest saved version created by Studio package updates.</p>
             </div>
 
             <div class="field-grid two">
@@ -180,11 +184,11 @@
               </div>
               <div>
                 <dt>Content type</dt>
-                <dd id="contentTypeText">Waiting for file</dd>
+                <dd id="contentTypeText">application/octet-stream</dd>
               </div>
               <div>
                 <dt>Source</dt>
-                <dd id="sourceText">Local file upload</dd>
+                <dd id="sourceText">Latest saved version</dd>
               </div>
               <div>
                 <dt>Targets</dt>

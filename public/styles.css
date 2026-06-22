@@ -328,8 +328,15 @@ select:focus,
 }
 
 .source-segmented span {
+  min-height: 42px;
   padding: 0 8px;
   text-align: center;
+  line-height: 1.15;
+  white-space: normal;
+}
+
+.source-segmented {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .places-picker {
@@ -678,6 +685,10 @@ svg {
   }
 
   .field-grid.two {
+    grid-template-columns: 1fr;
+  }
+
+  .source-segmented {
     grid-template-columns: 1fr;
   }
 
