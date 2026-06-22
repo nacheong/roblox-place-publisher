@@ -32,7 +32,7 @@
             <div class="panel-heading">
             <div>
               <h2 id="publish-title">Quick Publish</h2>
-              <p>Use an API key with <strong>universe-places:write</strong> and <strong>legacy-asset:manage</strong>.</p>
+              <p>Use an API key with <strong>universe-places:write</strong>.</p>
             </div>
             <span class="status-pill neutral" id="statusPill">Ready</span>
           </div>
@@ -85,14 +85,15 @@
               <label>Publish source</label>
               <div class="segmented source-segmented" role="radiogroup" aria-label="Publish source">
                 <label>
-                  <input type="radio" name="publishSource" value="current" checked>
-                  <span>Current Roblox version</span>
-                </label>
-                <label>
-                  <input type="radio" name="publishSource" value="file">
+                  <input type="radio" name="publishSource" value="file" checked>
                   <span>Local file</span>
                 </label>
+                <label>
+                  <input type="radio" name="publishSource" value="current">
+                  <span>Asset Delivery copy</span>
+                </label>
               </div>
+              <p class="field-note" id="sourceHint">Recommended for package rollouts: export or save the updated place file, then upload it here.</p>
             </div>
 
             <div class="field-grid two">
@@ -125,7 +126,7 @@
               <i data-lucide="file-up"></i>
               <div>
                 <strong id="fileTitle">Choose a place file</strong>
-                <span id="fileMeta">Optional fallback: .rbxl or .rbxlx</span>
+                <span id="fileMeta">.rbxl or .rbxlx from Studio</span>
               </div>
             </div>
 
@@ -183,7 +184,7 @@
               </div>
               <div>
                 <dt>Source</dt>
-                <dd id="sourceText">Current Roblox version</dd>
+                <dd id="sourceText">Local file upload</dd>
               </div>
               <div>
                 <dt>Targets</dt>

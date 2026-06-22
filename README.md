@@ -2,15 +2,16 @@
 
 A local web interface for quickly publishing Roblox places through Roblox Open Cloud.
 
-The app runs on your machine, can find places associated with a Universe ID, and can publish the current Roblox-saved version that Studio would open without making you manually choose a `.rbxl` file.
+The app runs on your machine, can find places associated with a Universe ID, and publishes `.rbxl` or `.rbxlx` place files to one or more selected places.
 
 ## Requirements
 
 - Roblox Open Cloud API key with:
   - `universe-places:write`
+- Optional for the advanced Asset Delivery copy mode:
   - `legacy-asset:manage`
 - Universe ID for the Roblox experience
-- Optional: a `.rbxl` or `.rbxlx` place file if you use **Local file** mode
+- A `.rbxl` or `.rbxlx` place file for the recommended **Local file** mode
 
 ## Launch
 
@@ -57,12 +58,13 @@ npm start
 2. Enter the experience's Universe ID.
 3. Click the search icon beside **Universe ID** to load associated places.
 4. Select one or more places with the checkboxes, or enter a manual Place ID.
-5. Leave **Publish source** on **Current Roblox version** to publish what Studio would load right now.
+5. Leave **Publish source** on **Local file** for package rollouts and normal releases.
 6. Choose `Published` or `Saved`.
-7. Review the generated request preview.
-8. Click **Publish**.
+7. Select a `.rbxl` or `.rbxlx` file exported or saved from Studio.
+8. Review the generated request preview.
+9. Click **Publish**.
 
-Use **Local file** mode only when you want to upload a specific `.rbxl` or `.rbxlx` file from disk.
+For package rollouts, update packages in Studio first, save or export the updated place file, then upload that file with **Published** selected.
 
 ## Token Storage
 
@@ -74,16 +76,18 @@ Use **Reset** to clear remembered IDs, remembered token, selected file state, an
 
 ## API Behavior
 
-For **Current Roblox version**, the local server:
-
-1. Downloads the selected place's current asset through Roblox Asset Delivery.
-2. Uploads those bytes to the Place Publishing API.
-
 For **Local file**, the local server forwards the selected file to:
 
 ```text
 https://apis.roblox.com/universes/v1/{universeId}/places/{placeId}/versions?versionType=Published
 ```
+
+For **Asset Delivery copy**, the local server:
+
+1. Downloads the selected place asset through Roblox Asset Delivery.
+2. Uploads those bytes to the Place Publishing API.
+
+Asset Delivery copy is advanced and may not include saved-but-unpublished Studio/package changes. Use **Local file** when you need to publish the result of Studio's package **Update All** workflow.
 
 Content types:
 
@@ -117,7 +121,7 @@ GitHub Actions also builds portable packages for Windows, Linux, and macOS on pu
 ## Troubleshooting
 
 - `401`: Check that your API key is valid.
-- `403`: Confirm the key has `universe-places:write` and `legacy-asset:manage`.
+- `403`: Confirm the key has `universe-places:write`. Asset Delivery copy mode also needs `legacy-asset:manage`.
 - `404`: Verify the Universe ID and Place ID.
 - `409`: The selected place is not part of the entered universe.
 - Empty place list: verify the Universe ID, then use manual Place ID as a fallback.
@@ -126,3 +130,4 @@ GitHub Actions also builds portable packages for Windows, Linux, and macOS on pu
 
 - https://create.roblox.com/docs/cloud/guides/usage-place-publishing
 - https://create.roblox.com/docs/cloud/reference/features/places
+- https://create.roblox.com/docs/projects/assets/packages

@@ -394,10 +394,10 @@ async function handlePublishCurrent(req, res, requestUrl) {
         ok: false,
         status: currentFile.status || 502,
         statusText: currentFile.statusText || "Asset delivery failed",
-        source: "currentRobloxVersion",
+        source: "assetDeliveryCopy",
         assetDeliveryEndpoint: currentFile.assetDeliveryEndpoint,
         body: currentFile.body,
-        message: "Unable to download the current Roblox place asset. The API key may need legacy-asset:manage."
+        message: "Unable to download the place asset from Asset Delivery. The API key may need legacy-asset:manage."
       });
       return;
     }
@@ -413,7 +413,7 @@ async function handlePublishCurrent(req, res, requestUrl) {
 
     sendJson(res, result.status, {
       ...result,
-      source: "currentRobloxVersion",
+      source: "assetDeliveryCopy",
       assetDeliveryEndpoint: currentFile.assetDeliveryEndpoint,
       contentBytes: currentFile.contentBytes
     });
@@ -422,8 +422,8 @@ async function handlePublishCurrent(req, res, requestUrl) {
       ok: false,
       status: 502,
       statusText: "Bad Gateway",
-      source: "currentRobloxVersion",
-      message: error instanceof Error ? error.message : "Unable to publish current Roblox version."
+      source: "assetDeliveryCopy",
+      message: error instanceof Error ? error.message : "Unable to publish Asset Delivery copy."
     });
   }
 }

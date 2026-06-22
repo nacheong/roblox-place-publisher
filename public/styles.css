@@ -218,6 +218,13 @@ form {
   min-width: 0;
 }
 
+.field-note {
+  margin: -1px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
 label {
   color: #2c3b50;
   font-size: 0.9rem;

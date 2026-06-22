@@ -11,6 +11,7 @@ const els = {
   placesList: document.querySelector("#placesList"),
   selectAllPlaces: document.querySelector("#selectAllPlaces"),
   contentType: document.querySelector("#contentType"),
+  sourceHint: document.querySelector("#sourceHint"),
   fileInput: document.querySelector("#placeFile"),
   fileZone: document.querySelector("#fileZone"),
   fileTitle: document.querySelector("#fileTitle"),
@@ -44,7 +45,7 @@ function getVersionType() {
 }
 
 function getPublishSource() {
-  return document.querySelector("input[name='publishSource']:checked")?.value || "current";
+  return document.querySelector("input[name='publishSource']:checked")?.value || "file";
 }
 
 function inferContentType(file) {
@@ -161,7 +162,8 @@ function buildCurl() {
     const versionType = encodeURIComponent(getVersionType());
 
     return `${prefix}${[
-      "# App workflow: download the current Roblox place asset, then publish those bytes.",
+      "# Advanced workflow: download the latest Asset Delivery copy, then publish those bytes.",
+      "# This may not include saved-but-unpublished Studio/package updates.",
       `curl --location --request POST "http://127.0.0.1:4173/api/publish-current?universeId=${universeId}&placeId=${placeId}&versionType=${versionType}" \\`,
       `  --header "x-api-key: $ROBLOX_API_KEY"`
     ].join("\n")}`;
@@ -185,6 +187,7 @@ function saveSettings() {
   }
 
   const settings = {
+    sourceModeVersion: 2,
     versionType: getVersionType(),
     publishSource: getPublishSource(),
     contentType: els.contentType.value,
@@ -228,7 +231,8 @@ function loadSettings() {
       versionInput.checked = true;
     }
 
-    const sourceInput = document.querySelector(`input[name='publishSource'][value='${settings.publishSource || "current"}']`);
+    const publishSource = settings.sourceModeVersion === 2 ? settings.publishSource || "file" : "file";
+    const sourceInput = document.querySelector(`input[name='publishSource'][value='${publishSource}']`);
     if (sourceInput) {
       sourceInput.checked = true;
     }
@@ -265,9 +269,15 @@ function updatePublishSourceUi() {
   contentTypeField?.classList.toggle("is-disabled", isCurrentSource);
 
   if (isCurrentSource) {
-    els.fileMeta.textContent = "Using the current Roblox asset for each selected place.";
+    els.fileMeta.textContent = "Using Asset Delivery copy; saved Studio/package changes may not be included.";
+    if (els.sourceHint) {
+      els.sourceHint.textContent = "Advanced: re-publishes bytes returned by Asset Delivery. Use Local file for package Update All rollouts.";
+    }
   } else if (!selectedFile) {
-    els.fileMeta.textContent = "Optional fallback: .rbxl or .rbxlx";
+    els.fileMeta.textContent = ".rbxl or .rbxlx from Studio";
+    if (els.sourceHint) {
+      els.sourceHint.textContent = "Recommended for package rollouts: export or save the updated place file, then upload it here.";
+    }
   }
 }
 
@@ -446,7 +456,7 @@ function updatePreview() {
 
   els.endpointText.textContent = endpoint.includes("{selectedPlaceId}") ? "Multiple selected place endpoints" : endpoint || "Waiting for IDs";
   els.contentTypeText.textContent = isCurrentSource ? "application/octet-stream" : contentType || "Waiting for file";
-  els.sourceText.textContent = isCurrentSource ? "Current Roblox version" : "Local file upload";
+  els.sourceText.textContent = isCurrentSource ? "Asset Delivery copy" : "Local file upload";
   els.targetText.textContent = describeTargets(targets);
   els.curlPreview.textContent = buildCurl();
 
@@ -476,8 +486,8 @@ function updateFile(file) {
   if (!selectedFile) {
     els.fileTitle.textContent = "Choose a place file";
     els.fileMeta.textContent = getPublishSource() === "current"
-      ? "Using the current Roblox asset for each selected place."
-      : "Optional fallback: .rbxl or .rbxlx";
+      ? "Using Asset Delivery copy; saved Studio/package changes may not be included."
+      : ".rbxl or .rbxlx from Studio";
     validate(false);
     return;
   }
@@ -501,7 +511,7 @@ async function publishPlace() {
   isPublishing = true;
   els.publishButton.disabled = true;
   setStatus("Publishing", "warning");
-  setResponse(`${source === "current" ? "Publishing current Roblox version" : "Uploading local file"} to ${targets.length} place${targets.length === 1 ? "" : "s"}...`, "neutral");
+  setResponse(`${source === "current" ? "Publishing Asset Delivery copy" : "Uploading local file"} to ${targets.length} place${targets.length === 1 ? "" : "s"}...`, "neutral");
 
   const results = [];
 
