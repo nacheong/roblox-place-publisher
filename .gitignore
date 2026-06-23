@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .portable-cache/
+debug-place-files/
 .env
 .env.*
 *.log

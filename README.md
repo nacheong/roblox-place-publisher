@@ -95,8 +95,8 @@ print(game.GameId)
 For the default no-file flow, the local server:
 
 1. Downloads the current delivered place asset bytes from Roblox Asset Delivery.
-2. Writes those bytes to a temporary `.rbxl` file.
-3. Runs `rbxcloud experience publish`.
+2. Saves those bytes under `debug-place-files/`.
+3. Runs `rbxcloud experience publish` using that saved debug file.
 
 The publish command follows the rbxcloud docs:
 
@@ -115,6 +115,19 @@ rbxcloud experience publish --filename <temp-file> --place-id <placeId> --univer
 ```
 
 When multiple places are selected in **Local file** mode, the same `.rbxl` file is published to every selected Place ID.
+
+## Debug Place Files
+
+Every publish attempt saves the exact `.rbxl` bytes passed to rbxcloud:
+
+```text
+debug-place-files/place-<placeId>-<timestamp>.rbxl
+debug-place-files/latest-place-<placeId>.rbxl
+```
+
+Use `latest-place-<placeId>.rbxl` when you want to quickly open the most recent pulled copy in Studio and check whether package updates are actually present.
+
+The folder is ignored by Git so downloaded place files are not committed accidentally.
 
 ## Command Line
 
@@ -181,6 +194,7 @@ aftman.toml         Aftman rbxcloud tool pin
 foreman.toml        Foreman rbxcloud tool pin
 .github/workflows/deploy-place.yml
                     GitHub Actions rbxcloud deploy workflow
+debug-place-files/ Saved debug copies of place files, ignored by Git
 public/index.html   App markup
 public/styles.css   App styles
 public/app.js       Client-side validation, storage, and publish flow

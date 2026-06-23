@@ -336,6 +336,14 @@ function getResultStatus(result) {
   return Number(result.status || result.response?.status || result.response?.body?.status || 0);
 }
 
+function getDebugFilePath(result) {
+  return result?.debugFile
+    || result?.latestDebugFile
+    || result?.response?.debugFile
+    || result?.response?.latestDebugFile
+    || "";
+}
+
 function interpretResult(result) {
   if (result.ok) {
     const publishedVersion = result.versionNumber ?? result.response?.body?.versionNumber;
@@ -489,7 +497,17 @@ function renderResponseBrief(payload, tone) {
       const id = document.createElement("code");
       id.textContent = String(result.placeId);
 
+      const debugFile = getDebugFilePath(result);
+
       item.append(title, meta, id);
+
+      if (debugFile) {
+        const debug = document.createElement("code");
+        debug.className = "debug-path";
+        debug.textContent = debugFile;
+        item.append(debug);
+      }
+
       grid.append(item);
     }
 

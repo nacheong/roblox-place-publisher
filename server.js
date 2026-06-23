@@ -1,7 +1,6 @@
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const http = require("node:http");
-const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { URL } = require("node:url");
@@ -9,6 +8,7 @@ const { URL } = require("node:url");
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 4173);
 const PUBLIC_DIR = path.resolve(__dirname, "public");
+const DEBUG_PLACE_DIR = path.resolve(__dirname, "debug-place-files");
 const RBXCLOUD_BINARY = process.platform === "win32" ? "rbxcloud.exe" : "rbxcloud";
 
 const MIME_TYPES = new Map([
@@ -219,6 +219,29 @@ function parseMaybeJson(text) {
 function getPlaceFileExtension(filename) {
   const extension = path.extname(filename || "").toLowerCase();
   return extension === ".rbxl" ? extension : "";
+}
+
+function timestampForFilename(date = new Date()) {
+  return date.toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "Z");
+}
+
+async function saveDebugPlaceFile({ placeId, buffer, fileExtension }) {
+  await fsp.mkdir(DEBUG_PLACE_DIR, { recursive: true });
+
+  const extension = fileExtension || ".rbxl";
+  const timestamp = timestampForFilename();
+  const debugFile = path.join(DEBUG_PLACE_DIR, `place-${placeId}-${timestamp}${extension}`);
+  const latestFile = path.join(DEBUG_PLACE_DIR, `latest-place-${placeId}${extension}`);
+
+  await fsp.writeFile(debugFile, buffer);
+  await fsp.writeFile(latestFile, buffer);
+
+  return {
+    debugFile,
+    latestDebugFile: latestFile
+  };
 }
 
 function validatePublishRequest(req, searchParams) {
@@ -452,51 +475,51 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
     };
   }
 
-  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "roblox-place-publisher-"));
-  const filename = path.join(tempDir, `place-${placeId}${fileExtension || ".rbxl"}`);
+  const buffer = Buffer.isBuffer(body) ? body : await streamToBuffer(body);
 
-  try {
-    const buffer = Buffer.isBuffer(body) ? body : await streamToBuffer(body);
-
-    if (buffer.length === 0) {
-      return {
-        ok: false,
-        status: 400,
-        statusText: "Empty file",
-        endpoint: "rbxcloud experience publish",
-        publisher: "rbxcloud",
-        command: "rbxcloud experience publish",
-        versionType,
-        originalFilename,
-        contentBytes: 0,
-        message: "A non-empty .rbxl file is required."
-      };
-    }
-
-    await fsp.writeFile(filename, buffer);
-
-    const result = await runRbxcloudPublish({
-      command,
-      apiKey,
-      universeId,
-      placeId,
-      versionType,
-      filename
-    });
-
+  if (buffer.length === 0) {
     return {
-      ...result,
+      ok: false,
+      status: 400,
+      statusText: "Empty file",
       endpoint: "rbxcloud experience publish",
       publisher: "rbxcloud",
       command: "rbxcloud experience publish",
       versionType,
       originalFilename,
-      rbxcloudFilename: filename,
-      contentBytes: buffer.length
+      contentBytes: 0,
+      message: "A non-empty .rbxl file is required."
     };
-  } finally {
-    await fsp.rm(tempDir, { recursive: true, force: true }).catch(() => {});
   }
+
+  const { debugFile, latestDebugFile } = await saveDebugPlaceFile({
+    placeId,
+    buffer,
+    fileExtension
+  });
+
+  const result = await runRbxcloudPublish({
+    command,
+    apiKey,
+    universeId,
+    placeId,
+    versionType,
+    filename: debugFile
+  });
+
+  return {
+    ...result,
+    endpoint: "rbxcloud experience publish",
+    publisher: "rbxcloud",
+    command: "rbxcloud experience publish",
+    versionType,
+    originalFilename,
+    rbxcloudFilename: debugFile,
+    debugFile,
+    latestDebugFile,
+    debugDirectory: DEBUG_PLACE_DIR,
+    contentBytes: buffer.length
+  };
 }
 
 async function downloadPlaceFileFromAssetDelivery(apiKey, placeId) {
