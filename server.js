@@ -231,16 +231,74 @@ function timestampForFilename(date = new Date()) {
 async function saveDebugPlaceFile({ placeId, buffer, fileExtension }) {
   await fsp.mkdir(DEBUG_PLACE_DIR, { recursive: true });
 
-  const extension = fileExtension || ".rbxl";
-  const timestamp = timestampForFilename();
-  const debugFile = path.join(DEBUG_PLACE_DIR, `place-${placeId}-${timestamp}${extension}`);
-  const latestFile = path.join(DEBUG_PLACE_DIR, `latest-place-${placeId}${extension}`);
+  const { debugFile, latestDebugFile } = getDebugPlacePaths({ placeId, fileExtension });
 
   await fsp.writeFile(debugFile, buffer);
 
   return {
     debugFile,
+    latestDebugFile
+  };
+}
+
+function getDebugPlacePaths({ placeId, fileExtension }) {
+  const extension = fileExtension || ".rbxl";
+  const timestamp = timestampForFilename();
+  const debugFile = path.join(DEBUG_PLACE_DIR, `place-${placeId}-${timestamp}${extension}`);
+  const latestFile = path.join(DEBUG_PLACE_DIR, `latest-place-${placeId}${extension}`);
+
+  return {
+    debugFile,
     latestDebugFile: latestFile
+  };
+}
+
+function isDebugPlaceFilename(filename) {
+  return /^latest-place-\d+\.rbxl(?:\.lock)?$/.test(filename)
+    || /^place-\d+-\d{8}T\d{6}Z\.rbxl(?:\.lock)?$/.test(filename);
+}
+
+async function clearDebugPlaceFiles() {
+  let entries;
+
+  try {
+    entries = await fsp.readdir(DEBUG_PLACE_DIR, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return {
+        deleted: 0,
+        bytes: 0,
+        files: []
+      };
+    }
+
+    throw error;
+  }
+
+  const files = [];
+  let bytes = 0;
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !isDebugPlaceFilename(entry.name)) {
+      continue;
+    }
+
+    const filePath = path.resolve(DEBUG_PLACE_DIR, entry.name);
+
+    if (!filePath.startsWith(`${DEBUG_PLACE_DIR}${path.sep}`)) {
+      throw new Error(`Refusing to delete a file outside ${DEBUG_PLACE_DIR}.`);
+    }
+
+    const stats = await fsp.stat(filePath);
+    await fsp.unlink(filePath);
+    bytes += stats.size;
+    files.push(entry.name);
+  }
+
+  return {
+    deleted: files.length,
+    bytes,
+    files
   };
 }
 
@@ -554,56 +612,94 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
   };
 }
 
-async function downloadPlaceFileFromAssetDelivery(apiKey, placeId) {
-  const assetDeliveryEndpoint = `https://apis.roblox.com/asset-delivery-api/v1/assetId/${placeId}`;
-  const assetResponse = await fetch(assetDeliveryEndpoint, {
-    headers: {
-      "accept": "application/json",
-      "x-api-key": apiKey
-    }
-  });
-  const assetText = await assetResponse.text();
-  const assetBody = parseMaybeJson(assetText);
+async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, versionType }) {
+  const command = resolveRbxcloudCommand();
+  const originalFilename = `place-${placeId}.rbxl`;
 
-  if (!assetResponse.ok || !assetBody?.location) {
+  if (!command) {
     return {
       ok: false,
-      status: assetResponse.status,
-      statusText: assetResponse.statusText,
-      assetDeliveryEndpoint,
-      body: assetBody,
-      message: "Unable to get a downloadable place asset URL from Roblox Asset Delivery."
+      status: 502,
+      statusText: "rbxcloud unavailable",
+      endpoint: "rbxcloud experience publish",
+      publisher: "rbxcloud",
+      versionType,
+      originalFilename,
+      body: null,
+      message: "rbxcloud was not found. Install it on PATH, set RBXCLOUD_PATH, or use a portable build that bundles it."
     };
   }
 
-  const contentResponse = await fetch(assetBody.location, {
-    headers: {
-      "accept": "application/octet-stream"
-    }
+  await fsp.mkdir(DEBUG_PLACE_DIR, { recursive: true });
+
+  const { debugFile, latestDebugFile } = getDebugPlacePaths({
+    placeId,
+    fileExtension: ".rbxl"
   });
 
-  if (!contentResponse.ok) {
-    const text = await contentResponse.text();
+  let touched;
+
+  try {
+    touched = await touchPlaceFile({
+      file: debugFile,
+      apiKey,
+      downloadPlaceId: placeId,
+      placeId,
+      universeId,
+      versionType,
+      source: "assetDelivery"
+    });
+  } catch (error) {
+    const payload = error?.payload || {};
+
     return {
       ok: false,
-      status: contentResponse.status,
-      statusText: contentResponse.statusText,
-      assetDeliveryEndpoint,
-      body: parseMaybeJson(text),
-      message: "Unable to download the place file from Roblox Asset Delivery."
+      status: payload.status || 422,
+      statusText: payload.statusText || "Lune download/mutation failed",
+      endpoint: "Lune Asset Delivery download and place mutation",
+      publisher: "rbxcloud",
+      command: "lune run scripts/touch-place-file.luau",
+      versionType,
+      originalFilename,
+      source: "robloxAsset",
+      debugFile,
+      debugDirectory: DEBUG_PLACE_DIR,
+      assetDeliveryEndpoint: payload.assetDeliveryEndpoint,
+      body: payload.body,
+      message: error instanceof Error ? error.message : "Unable to download and mutate place file before publishing."
     };
   }
 
-  const arrayBuffer = await contentResponse.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
+  await fsp.copyFile(debugFile, latestDebugFile);
+  const mutatedStats = await fsp.stat(debugFile);
+
+  const result = await runRbxcloudPublish({
+    command,
+    apiKey,
+    universeId,
+    placeId,
+    versionType,
+    filename: debugFile
+  });
 
   return {
-    ok: true,
-    status: 200,
-    statusText: "OK",
-    assetDeliveryEndpoint,
-    contentBytes: buffer.length,
-    buffer
+    ...result,
+    endpoint: "rbxcloud experience publish",
+    publisher: "rbxcloud",
+    command: "rbxcloud experience publish",
+    versionType,
+    originalFilename,
+    rbxcloudFilename: debugFile,
+    debugFile,
+    latestDebugFile,
+    debugDirectory: DEBUG_PLACE_DIR,
+    source: "robloxAsset",
+    assetDeliveryEndpoint: touched.download?.assetDeliveryEndpoint,
+    downloadLocation: touched.download?.downloadLocation,
+    mutation: touched.mutation,
+    originalContentBytes: touched.download?.contentBytes ?? touched.mutation?.originalBytes,
+    sourceContentBytes: touched.download?.contentBytes,
+    contentBytes: mutatedStats.size
   };
 }
 
@@ -656,53 +752,15 @@ async function handlePublishAsset(req, res, requestUrl) {
 
   req.resume();
 
-  const command = resolveRbxcloudCommand();
-
-  if (!command) {
-    sendJson(res, 502, {
-      ok: false,
-      status: 502,
-      statusText: "rbxcloud unavailable",
-      endpoint: "rbxcloud experience publish",
-      publisher: "rbxcloud",
-      message: "rbxcloud was not found. Install it on PATH, set RBXCLOUD_PATH, or use a portable build that bundles it."
-    });
-    return;
-  }
-
   try {
-    const placeFile = await downloadPlaceFileFromAssetDelivery(validation.apiKey, validation.placeId);
-
-    if (!placeFile.ok) {
-      sendJson(res, placeFile.status || 502, {
-        ok: false,
-        status: placeFile.status || 502,
-        statusText: placeFile.statusText || "Asset delivery failed",
-        source: "robloxAsset",
-        assetDeliveryEndpoint: placeFile.assetDeliveryEndpoint,
-        body: placeFile.body,
-        message: placeFile.message || "Unable to download the place asset from Roblox."
-      });
-      return;
-    }
-
-    const result = await publishToRoblox({
+    const result = await publishRobloxAssetToRoblox({
       apiKey: validation.apiKey,
       universeId: validation.universeId,
       placeId: validation.placeId,
-      versionType: validation.versionType,
-      originalFilename: `place-${validation.placeId}.rbxl`,
-      fileExtension: ".rbxl",
-      body: placeFile.buffer,
-      source: "assetDelivery"
+      versionType: validation.versionType
     });
 
-    sendJson(res, result.status, {
-      ...result,
-      source: "robloxAsset",
-      assetDeliveryEndpoint: placeFile.assetDeliveryEndpoint,
-      sourceContentBytes: placeFile.contentBytes
-    });
+    sendJson(res, result.status, result);
   } catch (error) {
     sendJson(res, 502, {
       ok: false,
@@ -710,6 +768,28 @@ async function handlePublishAsset(req, res, requestUrl) {
       statusText: "Bad Gateway",
       source: "robloxAsset",
       message: error instanceof Error ? error.message : "Unable to publish Roblox asset copy."
+    });
+  }
+}
+
+async function handleClearDebugPlaces(req, res) {
+  req.resume();
+
+  try {
+    const result = await clearDebugPlaceFiles();
+
+    sendJson(res, 200, {
+      ok: true,
+      action: "clearDebug",
+      debugDirectory: DEBUG_PLACE_DIR,
+      ...result
+    });
+  } catch (error) {
+    sendJson(res, 500, {
+      ok: false,
+      action: "clearDebug",
+      debugDirectory: DEBUG_PLACE_DIR,
+      message: error instanceof Error ? error.message : "Unable to clear debug place files."
     });
   }
 }
@@ -763,6 +843,11 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "POST" && requestUrl.pathname === "/api/publish-asset") {
     handlePublishAsset(req, res, requestUrl);
+    return;
+  }
+
+  if (req.method === "POST" && requestUrl.pathname === "/api/debug/clear") {
+    handleClearDebugPlaces(req, res);
     return;
   }
 

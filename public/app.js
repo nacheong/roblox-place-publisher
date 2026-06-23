@@ -30,6 +30,7 @@ const els = {
   responseEmpty: document.querySelector("#responseEmpty"),
   responseBrief: document.querySelector("#responseBrief"),
   responseOutput: document.querySelector("#responseOutput"),
+  clearDebug: document.querySelector("#clearDebug"),
   dashboardLink: document.querySelector("#dashboardLink")
 };
 
@@ -154,7 +155,7 @@ function buildEndpoint(placeId = getPreviewPlaceId()) {
   }
 
   if (getPublishSource() === "asset") {
-    return `Roblox Asset Delivery -> rbxcloud experience publish for ${placeId}`;
+    return `Lune Asset Delivery -> rbxcloud experience publish for ${placeId}`;
   }
 
   return `rbxcloud experience publish --universe-id ${universeId} --place-id ${placeId}`;
@@ -193,10 +194,10 @@ function buildCurl() {
   if (getPublishSource() === "asset") {
     return `${prefix}${[
       "# App no-file workflow:",
-      "# The local server downloads the current Roblox place file through Asset Delivery, then runs:",
-      "# 1. Update ServerStorage.__RobloxPlacePublisher.LastPublishTouch.Value",
-      "# 2. Save the touched debug .rbxl",
-      "# 3. Publish with rbxcloud",
+      "# 1. Lune downloads the current Roblox place file through Asset Delivery",
+      "# 2. Lune updates ServerStorage.__RobloxPlacePublisher.LastPublishTouch.Value",
+      "# 3. Lune saves the touched debug .rbxl",
+      "# 4. Publish with rbxcloud",
       "rbxcloud experience publish \\",
       "  --filename \"<downloaded-place>.rbxl\" \\",
       `  --place-id ${placeId} \\`,
@@ -468,6 +469,15 @@ function renderResponseBrief(payload, tone) {
   const heading = document.createElement("h3");
   const copy = document.createElement("p");
 
+  if (payload.action === "clearDebug") {
+    heading.textContent = "Debug files cleared";
+    copy.textContent = `Deleted ${payload.deleted || 0} file${payload.deleted === 1 ? "" : "s"}${payload.bytes ? ` (${formatBytes(payload.bytes)})` : ""}.`;
+    summary.append(heading, copy);
+    els.responseBrief.append(summary);
+    els.responseBrief.hidden = false;
+    return;
+  }
+
   if (results.length > 0) {
     const succeeded = results.filter((result) => result.ok).length;
     const failed = results.length - succeeded;
@@ -561,7 +571,7 @@ function updatePublishSourceUi() {
       els.fileMeta.textContent = ".rbxl from Studio";
     }
   } else {
-    els.sourceHint.textContent = "No file picker: downloads the current place file, updates a tiny ServerStorage StringValue, then republishes it.";
+    els.sourceHint.textContent = "No file picker: Lune downloads the current place file, updates a tiny ServerStorage StringValue, then rbxcloud republishes it.";
     els.fileMeta.textContent = "Asset Delivery source selected.";
   }
 }
@@ -751,9 +761,9 @@ function updatePreview() {
   const source = getPublishSource();
 
   els.endpointText.textContent = endpoint.includes("{selectedPlaceId}") ? "rbxcloud workflow for selected places" : endpoint || "Waiting for IDs";
-  els.fileText.textContent = source === "asset" ? "Asset Delivery" : selectedFile ? selectedFile.name : "Waiting for .rbxl";
+  els.fileText.textContent = source === "asset" ? "Lune debug .rbxl" : selectedFile ? selectedFile.name : "Waiting for .rbxl";
   els.sourceText.textContent = source === "asset"
-    ? "Asset Delivery copy"
+    ? "Lune Asset Delivery copy"
     : targets.length > 1
       ? "Same .rbxl to each target"
       : "Local .rbxl file";
@@ -811,7 +821,7 @@ async function publishPlace() {
   els.publishButton.disabled = true;
   setStatus("Publishing", "warning");
   setResponse(source === "asset"
-    ? `Touching and publishing Asset Delivery copy to ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`
+    ? `Lune downloading, touching, and publishing ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`
     : `Touching and publishing ${selectedFile.name} to ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`, "neutral");
 
   const results = [];
@@ -874,6 +884,38 @@ async function publishPlace() {
 
   isPublishing = false;
   validate(false);
+}
+
+async function clearDebugPlaces() {
+  if (!window.confirm("Delete saved debug place files from this app?")) {
+    return;
+  }
+
+  els.clearDebug.disabled = true;
+  setStatus("Clearing debug", "warning");
+
+  try {
+    const response = await fetch("/api/debug/clear", { method: "POST" });
+    const payload = await response.json();
+
+    if (!response.ok || !payload.ok) {
+      setStatus("Clear failed", "error");
+      setResponse(payload, "error");
+      return;
+    }
+
+    setStatus("Debug cleared", "success");
+    setResponse(payload, "success");
+  } catch (error) {
+    setStatus("Clear failed", "error");
+    setResponse({
+      ok: false,
+      action: "clearDebug",
+      message: error instanceof Error ? error.message : "Unable to clear debug files."
+    }, "error");
+  } finally {
+    els.clearDebug.disabled = false;
+  }
 }
 
 function resetForm() {
@@ -958,6 +1000,7 @@ function bindEvents() {
   });
 
   els.resetForm.addEventListener("click", resetForm);
+  els.clearDebug.addEventListener("click", clearDebugPlaces);
 
   [els.apiKey, els.universeId, els.placeId, els.rememberIds, els.rememberToken].forEach((element) => {
     element.addEventListener("input", () => {

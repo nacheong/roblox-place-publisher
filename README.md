@@ -4,7 +4,7 @@ A local web interface for quickly publishing Roblox places with `rbxcloud`.
 
 The app can load places associated with a Universe ID, remembers selected places in the browser, and publishes selected places without making you choose a `.rbxl` file by default.
 
-The default **Roblox asset** source reads the current place asset from Roblox, uses Lune to update a small `ServerStorage` marker instance, then passes those mutated bytes to `rbxcloud experience publish`.
+The default **Roblox asset** source asks Lune to download the current place asset from Roblox, update a small `ServerStorage` marker instance, save the changed `.rbxl`, then passes that saved file to `rbxcloud experience publish`.
 
 ## Requirements
 
@@ -98,12 +98,12 @@ print(game.PlaceId)
 print(game.GameId)
 ```
 
-For the default no-file flow, the local server:
+For the default no-file flow, the local server asks Lune to:
 
-1. Downloads the current delivered place asset bytes from Roblox Asset Delivery.
-2. Uses Lune to update `ServerStorage.__RobloxPlacePublisher.LastPublishTouch.Value`.
-3. Saves the mutated bytes under `debug-place-files/`.
-4. Runs `rbxcloud experience publish` using that saved debug file.
+1. Download the current delivered place asset bytes from Roblox Asset Delivery.
+2. Update `ServerStorage.__RobloxPlacePublisher.LastPublishTouch.Value`.
+3. Save the mutated bytes under `debug-place-files/`.
+4. Return the debug `.rbxl` path so the server can run `rbxcloud experience publish`.
 
 The instance touch makes the file bytes change on each publish by editing a tiny `StringValue` under `ServerStorage`.
 
@@ -139,6 +139,8 @@ Use `latest-place-<placeId>.rbxl` when you want to quickly open the most recent 
 The folder is ignored by Git so downloaded place files are not committed accidentally.
 
 The saved file is already touched with the `ServerStorage.__RobloxPlacePublisher.LastPublishTouch` `StringValue`, which is the same file that rbxcloud receives.
+
+Use **Clear debug** in the Response panel to delete old debug `.rbxl` files created by this app.
 
 ## Command Line
 
@@ -212,7 +214,7 @@ foreman.toml        Foreman rbxcloud and Lune tool pins
 scripts/touch-place-file.mjs
                     CLI used by GitHub Actions to touch a place before publish
 scripts/touch-place-file.luau
-                    Lune script that mutates the ServerStorage StringValue
+                    Lune script that downloads/touches/saves place files
 debug-place-files/ Saved debug copies of place files, ignored by Git
 public/index.html   App markup
 public/styles.css   App styles

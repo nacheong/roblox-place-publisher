@@ -98,7 +98,8 @@ button:disabled {
 }
 
 .docs-link,
-.panel-heading a {
+.panel-heading a,
+.panel-action {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -110,6 +111,23 @@ button:disabled {
   background: rgba(255, 255, 255, 0.82);
   text-decoration: none;
   white-space: nowrap;
+}
+
+.panel-action {
+  font-weight: 700;
+}
+
+.panel-action.danger {
+  color: var(--red);
+  background: #ffffff;
+}
+
+.response-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .workspace {
@@ -805,9 +823,16 @@ svg {
   }
 
   .docs-link,
+  .response-actions,
   .primary-button,
   .secondary-button,
   .ghost-button {
     width: 100%;
+  }
+
+  .response-actions a,
+  .response-actions button {
+    flex: 1 1 100%;
+    justify-content: center;
   }
 }

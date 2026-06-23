@@ -13,7 +13,9 @@ function parseArgs(argv) {
     placeId: "",
     universeId: "",
     versionType: "published",
-    source: "githubActions"
+    source: "githubActions",
+    apiKey: "",
+    downloadPlaceId: ""
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -44,6 +46,16 @@ function parseArgs(argv) {
       index += 1;
     } else if (value.startsWith("--source=")) {
       args.source = value.slice("--source=".length);
+    } else if (value === "--api-key") {
+      args.apiKey = argv[index + 1] || "";
+      index += 1;
+    } else if (value.startsWith("--api-key=")) {
+      args.apiKey = value.slice("--api-key=".length);
+    } else if (value === "--download-place-id") {
+      args.downloadPlaceId = argv[index + 1] || "";
+      index += 1;
+    } else if (value.startsWith("--download-place-id=")) {
+      args.downloadPlaceId = value.slice("--download-place-id=".length);
     }
   }
 
@@ -65,10 +77,17 @@ async function main() {
   requireValue(args.versionType, "--version-type");
 
   const file = path.resolve(ROOT, args.file);
-  await fs.access(file);
+
+  if (!args.downloadPlaceId) {
+    await fs.access(file);
+  } else {
+    requireValue(args.apiKey, "--api-key");
+  }
 
   const touched = await touchPlaceFile({
     file,
+    apiKey: args.apiKey,
+    downloadPlaceId: args.downloadPlaceId,
     placeId: args.placeId,
     universeId: args.universeId,
     versionType: args.versionType,
