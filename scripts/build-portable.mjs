@@ -252,6 +252,7 @@ async function copyAppFiles(appDir) {
   await fs.copyFile(path.join(ROOT, "package.json"), path.join(appDir, "package.json"));
   await fs.copyFile(path.join(ROOT, "README.md"), path.join(appDir, "README.md"));
   await fs.cp(path.join(ROOT, "public"), path.join(appDir, "public"), { recursive: true });
+  await fs.cp(path.join(ROOT, "lib"), path.join(appDir, "lib"), { recursive: true });
 }
 
 async function copyRuntime(nodeRoot, packageDir, targetConfig) {

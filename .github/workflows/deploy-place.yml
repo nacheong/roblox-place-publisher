@@ -27,6 +27,8 @@ on:
       - ".github/workflows/deploy-place.yml"
       - "aftman.toml"
       - "**/*.rbxl"
+      - "lib/place-touch.cjs"
+      - "scripts/touch-place-file.mjs"
 
 permissions:
   contents: read
@@ -49,6 +51,11 @@ jobs:
 
       - name: Install Aftman tools
         uses: ok-nick/setup-aftman@v0.4.2
+
+      - name: Set up Node.js for place mutation
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
 
       - name: Validate deploy settings
         shell: bash
@@ -113,6 +120,13 @@ jobs:
             fi
 
             echo "Publishing $PLACE_FILE to place $place_id as $VERSION_TYPE"
+            node scripts/touch-place-file.mjs \
+              --file "$PLACE_FILE" \
+              --place-id "$place_id" \
+              --universe-id "$UNIVERSE_ID" \
+              --version-type "$VERSION_TYPE" \
+              --source "githubActions"
+
             rbxcloud experience publish \
               --filename "$PLACE_FILE" \
               --place-id "$place_id" \

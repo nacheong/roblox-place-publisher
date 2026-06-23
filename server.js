@@ -4,6 +4,7 @@ const http = require("node:http");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { URL } = require("node:url");
+const { touchPlaceBuffer } = require("./lib/place-touch.cjs");
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 4173);
@@ -458,7 +459,7 @@ async function handlePlaces(req, res, requestUrl) {
   });
 }
 
-async function publishToRoblox({ apiKey, universeId, placeId, versionType, originalFilename, fileExtension, body }) {
+async function publishToRoblox({ apiKey, universeId, placeId, versionType, originalFilename, fileExtension, body, source }) {
   const command = resolveRbxcloudCommand();
 
   if (!command) {
@@ -492,9 +493,34 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
     };
   }
 
+  let touched;
+
+  try {
+    touched = touchPlaceBuffer(buffer, {
+      placeId,
+      universeId,
+      versionType,
+      source
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      status: 422,
+      statusText: "Mutation failed",
+      endpoint: "rbxcloud experience publish",
+      publisher: "rbxcloud",
+      command: "rbxcloud experience publish",
+      versionType,
+      originalFilename,
+      contentBytes: buffer.length,
+      message: error instanceof Error ? error.message : "Unable to mutate place file before publishing."
+    };
+  }
+
+  const mutatedBuffer = touched.buffer;
   const { debugFile, latestDebugFile } = await saveDebugPlaceFile({
     placeId,
-    buffer,
+    buffer: mutatedBuffer,
     fileExtension
   });
 
@@ -518,7 +544,9 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
     debugFile,
     latestDebugFile,
     debugDirectory: DEBUG_PLACE_DIR,
-    contentBytes: buffer.length
+    mutation: touched.mutation,
+    originalContentBytes: buffer.length,
+    contentBytes: mutatedBuffer.length
   };
 }
 
@@ -595,7 +623,8 @@ async function handlePublish(req, res, requestUrl) {
       versionType: validation.versionType,
       originalFilename: validation.originalFilename,
       fileExtension: validation.fileExtension,
-      body: req
+      body: req,
+      source: "localFile"
     });
 
     sendJson(res, result.status, result);
@@ -660,7 +689,8 @@ async function handlePublishAsset(req, res, requestUrl) {
       versionType: validation.versionType,
       originalFilename: `place-${validation.placeId}.rbxl`,
       fileExtension: ".rbxl",
-      body: placeFile.buffer
+      body: placeFile.buffer,
+      source: "assetDelivery"
     });
 
     sendJson(res, result.status, {

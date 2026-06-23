@@ -194,6 +194,9 @@ function buildCurl() {
     return `${prefix}${[
       "# App no-file workflow:",
       "# The local server downloads the current Roblox place file through Asset Delivery, then runs:",
+      "# 1. Update RobloxPlacePublisherTouch metadata",
+      "# 2. Save the touched debug .rbxl",
+      "# 3. Publish with rbxcloud",
       "rbxcloud experience publish \\",
       "  --filename \"<downloaded-place>.rbxl\" \\",
       `  --place-id ${placeId} \\`,
@@ -558,7 +561,7 @@ function updatePublishSourceUi() {
       els.fileMeta.textContent = ".rbxl from Studio";
     }
   } else {
-    els.sourceHint.textContent = "No file picker: downloads the current place file from Roblox Asset Delivery, then republishes it with rbxcloud.";
+    els.sourceHint.textContent = "No file picker: downloads the current place file, touches RobloxPlacePublisherTouch metadata, then republishes it.";
     els.fileMeta.textContent = "Asset Delivery source selected.";
   }
 }
@@ -808,8 +811,8 @@ async function publishPlace() {
   els.publishButton.disabled = true;
   setStatus("Publishing", "warning");
   setResponse(source === "asset"
-    ? `Publishing Asset Delivery copy to ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`
-    : `Publishing ${selectedFile.name} to ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`, "neutral");
+    ? `Touching and publishing Asset Delivery copy to ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`
+    : `Touching and publishing ${selectedFile.name} to ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`, "neutral");
 
   const results = [];
 
