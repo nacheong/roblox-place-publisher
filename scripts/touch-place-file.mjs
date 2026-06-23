@@ -97,6 +97,8 @@ async function main() {
   console.log(JSON.stringify({
     ok: true,
     file,
+    download: touched.download,
+    jaxonGuiPackage: touched.jaxonGuiPackage,
     mutation: touched.mutation
   }, null, 2));
 }

@@ -7,6 +7,9 @@ local serde = require("@lune/serde")
 local TOUCH_CONTAINER_NAME = "__RobloxPlacePublisher"
 local TOUCH_INSTANCE_NAME = "LastPublishTouch"
 local TOUCH_CLASS_NAME = "StringValue"
+local PACKAGE_TARGET_SERVICE = "StarterGui"
+local PACKAGE_TARGET_NAME = "JaxonGui"
+local PACKAGE_TARGET_PATH = PACKAGE_TARGET_SERVICE .. "." .. PACKAGE_TARGET_NAME
 
 local function parseArgs(args)
 	local values = {
@@ -267,6 +270,116 @@ local function readTouchValue(game)
 	}
 end
 
+local function safeReadProperty(instance, propertyName)
+	local ok, value = pcall(function()
+		return instance[propertyName]
+	end)
+
+	if ok then
+		return {
+			ok = true,
+			value = value,
+		}
+	end
+
+	return {
+		ok = false,
+		error = string.match(tostring(value), "^[^\n]+") or tostring(value),
+	}
+end
+
+local function serializeProperty(value)
+	local valueType = typeof(value)
+
+	if value == nil then
+		return nil
+	end
+
+	if valueType == "string" or valueType == "number" or valueType == "boolean" then
+		return value
+	end
+
+	return tostring(value)
+end
+
+local function readPackageProperty(packageLink, propertyName)
+	local read = safeReadProperty(packageLink, propertyName)
+
+	return {
+		ok = read.ok,
+		value = serializeProperty(read.value),
+		error = read.error,
+	}
+end
+
+local function inspectJaxonGuiPackage(game)
+	local starterGui = game:GetService(PACKAGE_TARGET_SERVICE)
+	local target = starterGui:FindFirstChild(PACKAGE_TARGET_NAME)
+
+	if target == nil then
+		return {
+			ok = false,
+			targetPath = PACKAGE_TARGET_PATH,
+			targetFound = false,
+			packageLinkFound = false,
+			message = PACKAGE_TARGET_PATH .. " was not found.",
+		}
+	end
+
+	local packageLink = target:FindFirstChildOfClass("PackageLink")
+
+	if packageLink == nil then
+		return {
+			ok = false,
+			targetPath = PACKAGE_TARGET_PATH,
+			targetFound = true,
+			packageLinkFound = false,
+			message = PACKAGE_TARGET_PATH .. " does not have a direct PackageLink child.",
+		}
+	end
+
+	local versionNumber = readPackageProperty(packageLink, "VersionNumber")
+	local packageId = readPackageProperty(packageLink, "PackageId")
+	local autoUpdate = readPackageProperty(packageLink, "AutoUpdate")
+	local hasNewVersion = readPackageProperty(packageLink, "HasNewVersion")
+	local status = readPackageProperty(packageLink, "Status")
+	local modifiedState = readPackageProperty(packageLink, "ModifiedState")
+	local packageAssetName = readPackageProperty(packageLink, "PackageAssetName")
+	local defaultName = readPackageProperty(packageLink, "DefaultName")
+
+	return {
+		ok = true,
+		targetPath = PACKAGE_TARGET_PATH,
+		targetFound = true,
+		packageLinkFound = true,
+		packageLinkPath = packageLink:GetFullName(),
+		versionNumber = versionNumber.value,
+		versionNumberReadable = versionNumber.ok,
+		versionNumberError = versionNumber.error,
+		packageId = packageId.value,
+		packageIdReadable = packageId.ok,
+		packageIdError = packageId.error,
+		autoUpdate = autoUpdate.value,
+		autoUpdateReadable = autoUpdate.ok,
+		autoUpdateError = autoUpdate.error,
+		hasNewVersion = hasNewVersion.value,
+		hasNewVersionReadable = hasNewVersion.ok,
+		hasNewVersionError = hasNewVersion.error,
+		status = status.value,
+		statusReadable = status.ok,
+		statusError = status.error,
+		modifiedState = modifiedState.value,
+		modifiedStateReadable = modifiedState.ok,
+		modifiedStateError = modifiedState.error,
+		packageAssetName = packageAssetName.value,
+		packageAssetNameReadable = packageAssetName.ok,
+		packageAssetNameError = packageAssetName.error,
+		defaultName = defaultName.value,
+		defaultNameReadable = defaultName.ok,
+		defaultNameError = defaultName.error,
+	}
+end
+
 local args = parseArgs(process.args)
 
 if args.verifyPlaceId ~= "" then
@@ -279,6 +392,7 @@ if args.verifyPlaceId ~= "" then
 	print(serde.encode("json", {
 		ok = valueMatches,
 		download = downloadInfo,
+		jaxonGuiPackage = inspectJaxonGuiPackage(game),
 		verification = {
 			ok = valueMatches,
 			type = "instance-stringvalue",
@@ -325,6 +439,7 @@ else
 		ok = true,
 		file = args.file,
 		download = downloadInfo,
+		jaxonGuiPackage = inspectJaxonGuiPackage(game),
 		mutation = {
 			ok = true,
 			type = "instance-stringvalue",

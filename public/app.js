@@ -348,6 +348,37 @@ function getDebugFilePath(result) {
     || "";
 }
 
+function getJaxonGuiPackage(result) {
+  return result?.jaxonGuiPackage
+    || result?.response?.jaxonGuiPackage
+    || result?.response?.verification?.jaxonGuiPackage
+    || result?.response?.verification?.attempts?.findLast?.((attempt) => attempt.jaxonGuiPackage)?.jaxonGuiPackage
+    || null;
+}
+
+function formatJaxonGuiPackage(info) {
+  if (!info) {
+    return "";
+  }
+
+  if (!info.ok) {
+    return info.message || "StarterGui.JaxonGui package link not found.";
+  }
+
+  const parts = [
+    info.versionNumber
+      ? `version ${info.versionNumber}`
+      : info.versionNumberReadable === false
+        ? "version unavailable"
+        : "version unknown",
+    info.packageId ? `asset ${info.packageId}` : "",
+    info.autoUpdate !== undefined && info.autoUpdate !== null ? `AutoUpdate ${info.autoUpdate}` : "",
+    info.status ? `status ${info.status}` : ""
+  ].filter(Boolean);
+
+  return `JaxonGui package: ${parts.join(", ")}`;
+}
+
 function interpretResult(result) {
   if (result.ok) {
     const publishedVersion = result.versionNumber ?? result.response?.body?.versionNumber;
@@ -525,8 +556,17 @@ function renderResponseBrief(payload, tone) {
       id.textContent = String(result.placeId);
 
       const debugFile = getDebugFilePath(result);
+      const jaxonGuiPackage = getJaxonGuiPackage(result);
+      const packageText = formatJaxonGuiPackage(jaxonGuiPackage);
 
       item.append(title, meta, id);
+
+      if (packageText) {
+        const packageInfo = document.createElement("span");
+        packageInfo.className = "package-info";
+        packageInfo.textContent = packageText;
+        item.append(packageInfo);
+      }
 
       if (debugFile) {
         const debug = document.createElement("code");

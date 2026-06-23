@@ -108,6 +108,7 @@ For the default no-file flow, the local server asks Lune to:
 
 The instance touch makes the file bytes change on each publish by editing a tiny `StringValue` under `ServerStorage`.
 If rbxcloud accepts the publish but the re-downloaded place does not contain the expected value, the app reports **Publish not verified** instead of a clean success.
+Publish results also include a `StarterGui.JaxonGui` package probe with its `PackageLink.VersionNumber`, `PackageId`, `AutoUpdate`, and status when those fields are available. If `VersionNumber` is not readable from the downloaded place file, the raw response includes the read error.
 
 The publish command follows the rbxcloud docs:
 

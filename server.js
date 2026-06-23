@@ -615,6 +615,7 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
     latestDebugFile,
     debugDirectory: DEBUG_PLACE_DIR,
     mutation: touched.mutation,
+    jaxonGuiPackage: touched.jaxonGuiPackage,
     originalContentBytes: buffer.length,
     contentBytes: mutatedStats.size
   };
@@ -638,6 +639,7 @@ async function verifyPublishedMarker({ apiKey, placeId, expectedValue }) {
         found: Boolean(verification.verification?.found),
         valueMatches: Boolean(verification.verification?.valueMatches),
         actualValue: verification.verification?.actualValue,
+        jaxonGuiPackage: verification.jaxonGuiPackage,
         contentBytes: verification.verification?.contentBytes,
         assetDeliveryEndpoint: verification.download?.assetDeliveryEndpoint
       };
@@ -797,6 +799,7 @@ async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, version
     assetDeliveryEndpoint: touched.download?.assetDeliveryEndpoint,
     downloadLocation: touched.download?.downloadLocation,
     mutation: touched.mutation,
+    jaxonGuiPackage: touched.jaxonGuiPackage,
     originalContentBytes: touched.download?.contentBytes ?? touched.mutation?.originalBytes,
     sourceContentBytes: touched.download?.contentBytes,
     contentBytes: mutatedStats.size
