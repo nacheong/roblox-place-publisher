@@ -204,6 +204,70 @@ function runRbxcloudPublish({ command, apiKey, universeId, placeId, versionType,
   });
 }
 
+function runRbxcloudAssetGet({ command, apiKey, assetId }) {
+  const args = [
+    "assets",
+    "get",
+    "--asset-id",
+    assetId
+  ];
+
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      env: {
+        ...process.env,
+        RBXCLOUD_API_KEY: apiKey
+      },
+      shell: false,
+      windowsHide: true
+    });
+    const stdout = [];
+    const stderr = [];
+
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+
+    child.on("error", (error) => {
+      resolve({
+        ok: false,
+        status: 502,
+        statusText: "rbxcloud failed",
+        body: null,
+        message: error instanceof Error ? error.message : "Unable to start rbxcloud."
+      });
+    });
+
+    child.on("exit", (code) => {
+      const stdoutText = Buffer.concat(stdout).toString("utf8").trim();
+      const stderrText = Buffer.concat(stderr).toString("utf8").trim();
+      const body = parseMaybeJson(stdoutText);
+
+      if (code === 0) {
+        resolve({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          body,
+          rbxcloudExitCode: code
+        });
+        return;
+      }
+
+      const parsedError = parseRbxcloudError(stderrText || stdoutText);
+
+      resolve({
+        ok: false,
+        status: parsedError.status,
+        statusText: "rbxcloud failed",
+        body: body || null,
+        rbxcloudExitCode: code,
+        message: parsedError.message,
+        stderr: stderrText
+      });
+    });
+  });
+}
+
 function parseMaybeJson(text) {
   if (!text) {
     return null;
@@ -263,6 +327,38 @@ function validatePublishRequest(req, searchParams) {
     versionType,
     originalFilename,
     fileExtension,
+    errors
+  };
+}
+
+function validateAssetPublishRequest(req, searchParams) {
+  const apiKey = req.headers["x-api-key"];
+  const universeId = (searchParams.get("universeId") || "").trim();
+  const placeId = (searchParams.get("placeId") || "").trim();
+  const versionType = (searchParams.get("versionType") || "published").trim().toLowerCase();
+  const errors = [];
+
+  if (!apiKey || Array.isArray(apiKey)) {
+    errors.push("API key is required.");
+  }
+
+  if (!/^\d+$/.test(universeId)) {
+    errors.push("Universe ID must be a number.");
+  }
+
+  if (!/^\d+$/.test(placeId)) {
+    errors.push("Place ID must be a number.");
+  }
+
+  if (!["published", "saved"].includes(versionType)) {
+    errors.push("Version type must be published or saved.");
+  }
+
+  return {
+    apiKey,
+    universeId,
+    placeId,
+    versionType,
     errors
   };
 }
@@ -467,6 +563,59 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
   }
 }
 
+async function downloadPlaceFileFromAssetDelivery(apiKey, placeId) {
+  const assetDeliveryEndpoint = `https://apis.roblox.com/asset-delivery-api/v1/assetId/${placeId}`;
+  const assetResponse = await fetch(assetDeliveryEndpoint, {
+    headers: {
+      "accept": "application/json",
+      "x-api-key": apiKey
+    }
+  });
+  const assetText = await assetResponse.text();
+  const assetBody = parseMaybeJson(assetText);
+
+  if (!assetResponse.ok || !assetBody?.location) {
+    return {
+      ok: false,
+      status: assetResponse.status,
+      statusText: assetResponse.statusText,
+      assetDeliveryEndpoint,
+      body: assetBody,
+      message: "Unable to get a downloadable place asset URL from Roblox Asset Delivery."
+    };
+  }
+
+  const contentResponse = await fetch(assetBody.location, {
+    headers: {
+      "accept": "application/octet-stream"
+    }
+  });
+
+  if (!contentResponse.ok) {
+    const text = await contentResponse.text();
+    return {
+      ok: false,
+      status: contentResponse.status,
+      statusText: contentResponse.statusText,
+      assetDeliveryEndpoint,
+      body: parseMaybeJson(text),
+      message: "Unable to download the place file from Roblox Asset Delivery."
+    };
+  }
+
+  const arrayBuffer = await contentResponse.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    assetDeliveryEndpoint,
+    contentBytes: buffer.length,
+    buffer
+  };
+}
+
 async function handlePublish(req, res, requestUrl) {
   const validation = validatePublishRequest(req, requestUrl.searchParams);
 
@@ -497,6 +646,96 @@ async function handlePublish(req, res, requestUrl) {
       status: 502,
       statusText: "Bad Gateway",
       message: error instanceof Error ? error.message : "Unable to reach Roblox Open Cloud."
+    });
+  }
+}
+
+async function handlePublishAsset(req, res, requestUrl) {
+  const validation = validateAssetPublishRequest(req, requestUrl.searchParams);
+
+  if (validation.errors.length > 0) {
+    req.resume();
+    sendJson(res, 400, {
+      ok: false,
+      errors: validation.errors
+    });
+    return;
+  }
+
+  req.resume();
+
+  const command = resolveRbxcloudCommand();
+
+  if (!command) {
+    sendJson(res, 502, {
+      ok: false,
+      status: 502,
+      statusText: "rbxcloud unavailable",
+      endpoint: "rbxcloud assets get",
+      publisher: "rbxcloud",
+      message: "rbxcloud was not found. Install it on PATH, set RBXCLOUD_PATH, or use a portable build that bundles it."
+    });
+    return;
+  }
+
+  try {
+    const assetInfo = await runRbxcloudAssetGet({
+      command,
+      apiKey: validation.apiKey,
+      assetId: validation.placeId
+    });
+
+    if (!assetInfo.ok) {
+      sendJson(res, assetInfo.status || 502, {
+        ...assetInfo,
+        endpoint: "rbxcloud assets get",
+        publisher: "rbxcloud",
+        source: "robloxAsset",
+        message: assetInfo.message || "Unable to read the place asset metadata with rbxcloud assets get."
+      });
+      return;
+    }
+
+    const placeFile = await downloadPlaceFileFromAssetDelivery(validation.apiKey, validation.placeId);
+
+    if (!placeFile.ok) {
+      sendJson(res, placeFile.status || 502, {
+        ok: false,
+        status: placeFile.status || 502,
+        statusText: placeFile.statusText || "Asset delivery failed",
+        source: "robloxAsset",
+        assetInfo: assetInfo.body,
+        assetDeliveryEndpoint: placeFile.assetDeliveryEndpoint,
+        body: placeFile.body,
+        message: placeFile.message || "Unable to download the place asset from Roblox."
+      });
+      return;
+    }
+
+    const result = await publishToRoblox({
+      apiKey: validation.apiKey,
+      universeId: validation.universeId,
+      placeId: validation.placeId,
+      versionType: validation.versionType,
+      originalFilename: `place-${validation.placeId}.rbxl`,
+      fileExtension: ".rbxl",
+      body: placeFile.buffer
+    });
+
+    sendJson(res, result.status, {
+      ...result,
+      source: "robloxAsset",
+      assetInfo: assetInfo.body,
+      assetDeliveryEndpoint: placeFile.assetDeliveryEndpoint,
+      sourceContentBytes: placeFile.contentBytes
+    });
+  } catch (error) {
+    sendJson(res, 502, {
+      ok: false,
+      status: 502,
+      statusText: "Bad Gateway",
+      source: "robloxAsset",
+      message: error instanceof Error ? error.message : "Unable to publish Roblox asset copy."
     });
   }
 }
@@ -545,6 +784,11 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "POST" && requestUrl.pathname === "/api/publish") {
     handlePublish(req, res, requestUrl);
+    return;
+  }
+
+  if (req.method === "POST" && requestUrl.pathname === "/api/publish-asset") {
+    handlePublishAsset(req, res, requestUrl);
     return;
   }
 

@@ -327,6 +327,14 @@ select:focus,
   border-radius: 6px;
 }
 
+.source-segmented span {
+  min-height: 42px;
+  padding: 0 8px;
+  text-align: center;
+  line-height: 1.15;
+  white-space: normal;
+}
+
 .places-picker {
   display: grid;
   gap: 12px;

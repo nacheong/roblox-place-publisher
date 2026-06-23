@@ -10,6 +10,7 @@ const els = {
   placesHint: document.querySelector("#placesHint"),
   placesList: document.querySelector("#placesList"),
   selectAllPlaces: document.querySelector("#selectAllPlaces"),
+  sourceHint: document.querySelector("#sourceHint"),
   fileInput: document.querySelector("#placeFile"),
   fileZone: document.querySelector("#fileZone"),
   fileTitle: document.querySelector("#fileTitle"),
@@ -43,6 +44,10 @@ let savedPlacesByUniverse = {};
 
 function getVersionType() {
   return document.querySelector("input[name='versionType']:checked")?.value || "published";
+}
+
+function getPublishSource() {
+  return document.querySelector("input[name='publishSource']:checked")?.value || "asset";
 }
 
 function getVersionAction() {
@@ -148,7 +153,21 @@ function buildEndpoint(placeId = getPreviewPlaceId()) {
     return "";
   }
 
+  if (getPublishSource() === "asset") {
+    return `rbxcloud assets get --asset-id ${placeId} -> rbxcloud experience publish`;
+  }
+
   return `rbxcloud experience publish --universe-id ${universeId} --place-id ${placeId}`;
+}
+
+function buildAssetPublishUrl(placeId) {
+  const params = new URLSearchParams({
+    universeId: els.universeId.value.trim(),
+    placeId,
+    versionType: getVersionType()
+  });
+
+  return `/api/publish-asset?${params.toString()}`;
 }
 
 function buildLocalPublishUrl(placeId) {
@@ -170,6 +189,20 @@ function buildCurl() {
   const placeId = previewPlaceId || "{placeId}";
   const versionType = getVersionType();
   const prefix = targets.length > 1 ? `# Repeat for selected Place IDs: ${targets.join(", ")}\n` : "";
+
+  if (getPublishSource() === "asset") {
+    return `${prefix}${[
+      "# App no-file workflow:",
+      `rbxcloud assets get --asset-id ${placeId} --api-key "$ROBLOX_API_KEY"`,
+      "# The local server downloads the current Roblox place asset bytes, then runs:",
+      "rbxcloud experience publish \\",
+      "  --filename \"<downloaded-place>.rbxl\" \\",
+      `  --place-id ${placeId} \\`,
+      `  --universe-id ${universeId} \\`,
+      `  --version-type ${versionType} \\`,
+      "  --api-key \"$ROBLOX_API_KEY\""
+    ].join("\n")}`;
+  }
 
   return `${prefix}${[
     "rbxcloud experience publish \\",
@@ -194,8 +227,9 @@ function saveSettings() {
   }
 
   const settings = {
-    settingsVersion: 5,
+    settingsVersion: 6,
     versionType: getVersionType(),
+    publishSource: getPublishSource(),
     rememberIds,
     rememberToken,
     placeSelectionsByUniverse: savedPlaceSelections,
@@ -241,6 +275,11 @@ function loadSettings() {
     const versionInput = document.querySelector(`input[name='versionType'][value='${settings.versionType || "published"}']`);
     if (versionInput) {
       versionInput.checked = true;
+    }
+
+    const sourceInput = document.querySelector(`input[name='publishSource'][value='${settings.publishSource || "asset"}']`);
+    if (sourceInput) {
+      sourceInput.checked = true;
     }
   } catch {
     localStorage.removeItem(STORAGE_KEY);
@@ -326,14 +365,14 @@ function interpretResult(result) {
   if (status === 403 && lowerMessage.includes("asset:read")) {
     return {
       title: "Missing asset:read",
-      detail: "The key cannot list place versions. Add the asset:read scope, then retry."
+      detail: "The key cannot read Roblox asset metadata. Add the asset:read scope, then retry."
     };
   }
 
   if (status === 403 && lowerMessage.includes("legacy-asset")) {
     return {
       title: "Missing legacy-asset:manage",
-      detail: "The key cannot download the saved place bytes. Add legacy-asset:manage, then retry."
+      detail: "The key cannot download the place asset bytes. Add legacy-asset:manage, then retry."
     };
   }
 
@@ -496,6 +535,24 @@ function setResponse(payload, tone) {
   }
 }
 
+function updatePublishSourceUi() {
+  const source = getPublishSource();
+  const isFileSource = source === "file";
+
+  els.fileZone.classList.toggle("hidden", !isFileSource);
+
+  if (isFileSource) {
+    els.sourceHint.textContent = "Fallback: upload an explicit .rbxl file from disk.";
+
+    if (!selectedFile) {
+      els.fileMeta.textContent = ".rbxl from Studio";
+    }
+  } else {
+    els.sourceHint.textContent = "No file picker: reads the current place asset from Roblox, then republishes it with rbxcloud.";
+    els.fileMeta.textContent = "Roblox asset source selected.";
+  }
+}
+
 function clearPlaces(message = "No places loaded.") {
   discoveredPlaces = [];
   selectedPlaceIds = new Set();
@@ -639,6 +696,7 @@ function validate(showErrors = false) {
   const universeId = els.universeId.value.trim();
   const manualPlaceId = els.placeId.value.trim();
   const targets = getPublishTargets();
+  const isFileSource = getPublishSource() === "file";
 
   if (!els.apiKey.value.trim()) {
     errors.push("Enter an API key.");
@@ -656,11 +714,11 @@ function validate(showErrors = false) {
     errors.push("Select at least one associated place or enter a manual Place ID.");
   }
 
-  if (!selectedFile) {
+  if (isFileSource && !selectedFile) {
     errors.push("Select a .rbxl file.");
   }
 
-  if (selectedFile && !isRbxlFile(selectedFile)) {
+  if (isFileSource && selectedFile && !isRbxlFile(selectedFile)) {
     errors.push("The selected file must end in .rbxl.");
   }
 
@@ -677,10 +735,15 @@ function validate(showErrors = false) {
 function updatePreview() {
   const endpoint = buildEndpoint();
   const targets = getPublishTargets();
+  const source = getPublishSource();
 
-  els.endpointText.textContent = endpoint.includes("{selectedPlaceId}") ? "rbxcloud publish for selected places" : endpoint || "Waiting for IDs";
-  els.fileText.textContent = selectedFile ? selectedFile.name : "Waiting for .rbxl";
-  els.sourceText.textContent = targets.length > 1 ? "Same .rbxl to each target" : "Local .rbxl file";
+  els.endpointText.textContent = endpoint.includes("{selectedPlaceId}") ? "rbxcloud workflow for selected places" : endpoint || "Waiting for IDs";
+  els.fileText.textContent = source === "asset" ? "Roblox asset" : selectedFile ? selectedFile.name : "Waiting for .rbxl";
+  els.sourceText.textContent = source === "asset"
+    ? "Roblox asset copy"
+    : targets.length > 1
+      ? "Same .rbxl to each target"
+      : "Local .rbxl file";
   els.targetText.textContent = describeTargets(targets);
   els.curlPreview.textContent = buildCurl();
 
@@ -724,8 +787,9 @@ function updateFile(file) {
 async function publishPlace() {
   const errors = validate(true);
   const targets = getPublishTargets();
+  const source = getPublishSource();
 
-  if (errors.length > 0 || !selectedFile || targets.length === 0) {
+  if (errors.length > 0 || (source === "file" && !selectedFile) || targets.length === 0) {
     setStatus("Check fields", "warning");
     return;
   }
@@ -733,7 +797,9 @@ async function publishPlace() {
   isPublishing = true;
   els.publishButton.disabled = true;
   setStatus("Publishing", "warning");
-  setResponse(`Publishing ${selectedFile.name} to ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`, "neutral");
+  setResponse(source === "asset"
+    ? `Publishing Roblox asset copy to ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`
+    : `Publishing ${selectedFile.name} to ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`, "neutral");
 
   const results = [];
 
@@ -749,10 +815,12 @@ async function publishPlace() {
         headers
       };
 
-      headers["content-type"] = "application/octet-stream";
-      request.body = selectedFile;
+      if (source === "file") {
+        headers["content-type"] = "application/octet-stream";
+        request.body = selectedFile;
+      }
 
-      const url = buildLocalPublishUrl(placeId);
+      const url = source === "asset" ? buildAssetPublishUrl(placeId) : buildLocalPublishUrl(placeId);
       const response = await fetch(url, request);
 
       const payload = await response.json();
@@ -760,7 +828,7 @@ async function publishPlace() {
 
       results.push({
         placeId,
-        source: "rbxcloud-file",
+        source,
         ok: response.ok && payload.ok,
         status: payload.status || response.status,
         versionNumber,
@@ -769,7 +837,7 @@ async function publishPlace() {
     } catch (error) {
       results.push({
         placeId,
-        source: "rbxcloud-file",
+        source,
         ok: false,
         message: error instanceof Error ? error.message : "Publish failed."
       });
@@ -783,8 +851,8 @@ async function publishPlace() {
   setResponse({
     ok: allOk,
     universeId: els.universeId.value.trim(),
-    source: "rbxcloud-file",
-    file: selectedFile.name,
+    source,
+    file: source === "file" ? selectedFile.name : null,
     versionType: getVersionType(),
     targets: results.length,
     succeeded,
@@ -811,6 +879,7 @@ function resetForm() {
   localStorage.removeItem(STORAGE_KEY);
   clearPlaces();
   updateFile(null);
+  updatePublishSourceUi();
 }
 
 function bindEvents() {
@@ -895,10 +964,18 @@ function bindEvents() {
   document.querySelectorAll("input[name='versionType']").forEach((element) => {
     element.addEventListener("change", () => validate(false));
   });
+
+  document.querySelectorAll("input[name='publishSource']").forEach((element) => {
+    element.addEventListener("change", () => {
+      updatePublishSourceUi();
+      validate(false);
+    });
+  });
 }
 
 loadSettings();
 bindEvents();
+updatePublishSourceUi();
 if (!restoreCachedPlaces(els.universeId.value.trim())) {
   renderPlaces();
 }

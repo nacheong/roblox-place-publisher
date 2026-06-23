@@ -1,16 +1,19 @@
 # Roblox Place Publisher
 
-A local web interface for quickly publishing a `.rbxl` file with `rbxcloud experience publish`.
+A local web interface for quickly publishing Roblox places with `rbxcloud`.
 
-The app can load places associated with a Universe ID, remembers selected places in the browser, and loops the same rbxcloud publish command over each selected Place ID.
+The app can load places associated with a Universe ID, remembers selected places in the browser, and publishes selected places without making you choose a `.rbxl` file by default.
 
-Important: when multiple places are selected, the same `.rbxl` file is published to every selected Place ID.
+The default **Roblox asset** source reads the current place asset from Roblox, then passes those downloaded bytes to `rbxcloud experience publish`.
 
 ## Requirements
 
-- Roblox Open Cloud API key with `universe-places:write`
+- Roblox Open Cloud API key with:
+  - `universe-places:write`
+  - `asset:read`
+  - `legacy-asset:manage`
 - Universe ID for the Roblox experience
-- One `.rbxl` place file from Roblox Studio
+- Optional `.rbxl` file if you use the **Local file** fallback
 
 ## Launch
 
@@ -58,24 +61,35 @@ npm start
 2. Enter the experience's Universe ID.
 3. Click the search icon beside **Universe ID** to load associated places.
 4. Select one or more places with the checkboxes, or enter a manual Place ID.
-5. Choose `Published` or `Saved`.
-6. Select a `.rbxl` file.
-7. Review the generated rbxcloud command preview.
+5. Leave **Publish source** on **Roblox asset** for no-file publishing.
+6. Choose `Published` or `Saved`.
+7. Review the generated rbxcloud workflow preview.
 8. Click **Publish**.
 
-The generated command follows the rbxcloud docs:
+For the default no-file flow, the local server:
+
+1. Runs `rbxcloud assets get --asset-id <placeId>` to read asset metadata.
+2. Downloads the current delivered place asset bytes from Roblox Asset Delivery.
+3. Writes those bytes to a temporary `.rbxl` file.
+4. Runs `rbxcloud experience publish`.
+
+The publish command follows the rbxcloud docs:
 
 ```text
 rbxcloud experience publish --filename <FILENAME> --place-id <PLACE_ID> --universe-id <UNIVERSE_ID> --version-type <VERSION_TYPE> --api-key <API_KEY>
 ```
 
-The local server receives the uploaded `.rbxl`, writes it to a temporary `.rbxl` filename, then runs:
+The API key is supplied to rbxcloud through `RBXCLOUD_API_KEY`, which rbxcloud supports, so the app does not need to print the real key in the command output.
+
+## Local File Fallback
+
+If you choose **Local file**, the local server receives the uploaded `.rbxl`, writes it to a temporary `.rbxl` filename, then runs:
 
 ```text
 rbxcloud experience publish --filename <temp-file> --place-id <placeId> --universe-id <universeId> --version-type <published|saved>
 ```
 
-The API key is supplied to rbxcloud through `RBXCLOUD_API_KEY`, which rbxcloud supports, so the app does not need to print the real key in the command output.
+When multiple places are selected in **Local file** mode, the same `.rbxl` file is published to every selected Place ID.
 
 ## Token Storage
 
@@ -110,14 +124,16 @@ GitHub Actions also builds portable packages for Windows, Linux, and macOS on pu
 ## Troubleshooting
 
 - `401`: Check that your API key is valid.
-- `403`: Confirm the key has `universe-places:write`, creator ownership, and universe permissions.
+- `403`: Confirm the key has `universe-places:write`, `asset:read`, `legacy-asset:manage`, creator ownership, and universe permissions.
 - `404`: Verify the Universe ID and Place ID.
 - `429`: Roblox is rate limiting publish requests. Wait, then retry a smaller batch.
 - Empty place list: verify the Universe ID, then use manual Place ID as a fallback.
-- Package updates not appearing live: export or save a `.rbxl` that already contains the package updates, then publish that file. This app now publishes the exact file you select.
+- Package updates not appearing live: the **Roblox asset** source republishes Roblox's currently delivered place asset. It cannot see unsaved Studio session edits.
 
 ## Roblox Docs
 
 - https://sleitnick.github.io/rbxcloud/cli/cli-experience/
+- https://sleitnick.github.io/rbxcloud/cli/cli-assets/
 - https://create.roblox.com/docs/cloud/guides/usage-place-publishing
+- https://create.roblox.com/docs/cloud/reference/features/assets
 - https://create.roblox.com/docs/cloud/reference/features/places

@@ -32,7 +32,7 @@
             <div class="panel-heading">
             <div>
               <h2 id="publish-title">Quick Publish</h2>
-              <p>Use an API key with <strong>universe-places:write</strong>.</p>
+              <p>Use an API key with <strong>universe-places:write</strong>, <strong>asset:read</strong>, and <strong>legacy-asset:manage</strong>.</p>
             </div>
             <span class="status-pill neutral" id="statusPill">Ready</span>
           </div>
@@ -81,6 +81,21 @@
               </div>
             </section>
 
+            <div class="field">
+              <label>Publish source</label>
+              <div class="segmented source-segmented" role="radiogroup" aria-label="Publish source">
+                <label>
+                  <input type="radio" name="publishSource" value="asset" checked>
+                  <span>Roblox asset</span>
+                </label>
+                <label>
+                  <input type="radio" name="publishSource" value="file">
+                  <span>Local file</span>
+                </label>
+              </div>
+              <p class="field-note" id="sourceHint">No file picker: reads the current place asset from Roblox, then republishes it with rbxcloud.</p>
+            </div>
+
             <div class="field-grid one">
               <div class="field">
                 <label>Version type</label>
@@ -97,7 +112,7 @@
               </div>
             </div>
 
-            <div class="file-zone" id="fileZone">
+            <div class="file-zone hidden" id="fileZone">
               <input id="placeFile" name="placeFile" type="file" accept=".rbxl">
               <i data-lucide="file-up"></i>
               <div>
@@ -119,7 +134,7 @@
 
               <div class="checks" aria-label="Request facts">
                 <span>rbxcloud</span>
-                <span>.rbxl</span>
+                <span>assets get</span>
                 <span>publish</span>
               </div>
             </div>
@@ -156,11 +171,11 @@
               </div>
               <div>
                 <dt>File</dt>
-                <dd id="fileText">Waiting for .rbxl</dd>
+                <dd id="fileText">Roblox asset</dd>
               </div>
               <div>
                 <dt>Source</dt>
-                <dd id="sourceText">Local .rbxl file</dd>
+                <dd id="sourceText">Roblox asset copy</dd>
               </div>
               <div>
                 <dt>Targets</dt>
