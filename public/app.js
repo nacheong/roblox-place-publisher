@@ -352,7 +352,10 @@ function interpretResult(result) {
   if (result.ok) {
     const publishedVersion = result.versionNumber ?? result.response?.body?.versionNumber;
     const sourceVersion = result.response?.sourceVersionNumber;
-    const detail = publishedVersion
+    const verified = Boolean(result.response?.verification?.ok);
+    const detail = verified
+      ? "Roblox accepted the publish and a fresh download contains the expected LastPublishTouch value."
+      : publishedVersion
       ? `Roblox accepted it as version ${publishedVersion}${sourceVersion ? ` from saved version ${sourceVersion}` : ""}.`
       : "Roblox accepted the publish request.";
 
@@ -365,6 +368,17 @@ function interpretResult(result) {
   const status = getResultStatus(result);
   const message = [result.message, extractPayloadMessage(result.response || {})].filter(Boolean).join(" ");
   const lowerMessage = message.toLowerCase();
+  const verification = result.response?.verification;
+
+  if (result.response?.publishAccepted && verification && !verification.ok) {
+    const lastAttempt = Array.isArray(verification.attempts) ? verification.attempts.at(-1) : null;
+    const actual = lastAttempt?.actualValue ? ` Last downloaded value: ${lastAttempt.actualValue}` : "";
+
+    return {
+      title: "Publish not verified",
+      detail: `${message || "rbxcloud accepted the publish, but a fresh Roblox download did not contain the expected LastPublishTouch value."}${actual}`
+    };
+  }
 
   if (status === 401) {
     return {

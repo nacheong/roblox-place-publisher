@@ -104,8 +104,10 @@ For the default no-file flow, the local server asks Lune to:
 2. Update `ServerStorage.__RobloxPlacePublisher.LastPublishTouch.Value`.
 3. Save the mutated bytes under `debug-place-files/`.
 4. Return the debug `.rbxl` path so the server can run `rbxcloud experience publish`.
+5. Re-download the published place and verify the `LastPublishTouch` value matches the debug file.
 
 The instance touch makes the file bytes change on each publish by editing a tiny `StringValue` under `ServerStorage`.
+If rbxcloud accepts the publish but the re-downloaded place does not contain the expected value, the app reports **Publish not verified** instead of a clean success.
 
 The publish command follows the rbxcloud docs:
 

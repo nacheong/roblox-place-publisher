@@ -4,13 +4,15 @@ const http = require("node:http");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { URL } = require("node:url");
-const { touchPlaceFile } = require("./lib/place-touch.cjs");
+const { touchPlaceFile, verifyPlaceMarker } = require("./lib/place-touch.cjs");
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 4173);
 const PUBLIC_DIR = path.resolve(__dirname, "public");
 const DEBUG_PLACE_DIR = path.resolve(__dirname, "debug-place-files");
 const RBXCLOUD_BINARY = process.platform === "win32" ? "rbxcloud.exe" : "rbxcloud";
+const VERIFY_PUBLISH_ATTEMPTS = Number(process.env.PUBLISH_VERIFY_ATTEMPTS || 4);
+const VERIFY_PUBLISH_DELAY_MS = Number(process.env.PUBLISH_VERIFY_DELAY_MS || 1500);
 
 const MIME_TYPES = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -132,6 +134,12 @@ function streamToBuffer(stream) {
     stream.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
     stream.on("error", reject);
     stream.on("end", () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
   });
 }
 
@@ -612,6 +620,91 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
   };
 }
 
+async function verifyPublishedMarker({ apiKey, placeId, expectedValue }) {
+  const attempts = [];
+  const maxAttempts = Math.max(1, VERIFY_PUBLISH_ATTEMPTS);
+  const delayMs = Math.max(0, VERIFY_PUBLISH_DELAY_MS);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const verification = await verifyPlaceMarker({
+        apiKey,
+        placeId,
+        expectedValue
+      });
+      const summary = {
+        attempt,
+        ok: Boolean(verification.ok),
+        found: Boolean(verification.verification?.found),
+        valueMatches: Boolean(verification.verification?.valueMatches),
+        actualValue: verification.verification?.actualValue,
+        contentBytes: verification.verification?.contentBytes,
+        assetDeliveryEndpoint: verification.download?.assetDeliveryEndpoint
+      };
+
+      attempts.push(summary);
+
+      if (verification.ok) {
+        return {
+          ok: true,
+          attempts,
+          ...verification
+        };
+      }
+    } catch (error) {
+      const payload = error?.payload || {};
+
+      attempts.push({
+        attempt,
+        ok: false,
+        status: payload.status || 0,
+        statusText: payload.statusText || "",
+        assetDeliveryEndpoint: payload.assetDeliveryEndpoint,
+        message: error instanceof Error ? error.message : "Unable to verify published marker."
+      });
+    }
+
+    if (attempt < maxAttempts && delayMs > 0) {
+      await wait(delayMs);
+    }
+  }
+
+  return {
+    ok: false,
+    attempts,
+    message: "rbxcloud accepted the publish, but a fresh Roblox download did not contain the expected LastPublishTouch value."
+  };
+}
+
+async function applyPublishedVerification({ result, apiKey, placeId, versionType, expectedValue }) {
+  if (!result.ok || versionType !== "published" || !expectedValue) {
+    return result;
+  }
+
+  const verification = await verifyPublishedMarker({
+    apiKey,
+    placeId,
+    expectedValue
+  });
+
+  if (verification.ok) {
+    return {
+      ...result,
+      verification
+    };
+  }
+
+  return {
+    ...result,
+    ok: false,
+    publishAccepted: true,
+    status: 409,
+    statusText: "Publish verification failed",
+    verification,
+    message: verification.message
+  };
+}
+
 async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, versionType }) {
   const command = resolveRbxcloudCommand();
   const originalFilename = `place-${placeId}.rbxl`;
@@ -673,13 +766,20 @@ async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, version
   await fsp.copyFile(debugFile, latestDebugFile);
   const mutatedStats = await fsp.stat(debugFile);
 
-  const result = await runRbxcloudPublish({
+  const publishResult = await runRbxcloudPublish({
     command,
     apiKey,
     universeId,
     placeId,
     versionType,
     filename: debugFile
+  });
+  const result = await applyPublishedVerification({
+    result: publishResult,
+    apiKey,
+    placeId,
+    versionType,
+    expectedValue: touched.mutation?.value
   });
 
   return {
