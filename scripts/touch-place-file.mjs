@@ -15,7 +15,9 @@ function parseArgs(argv) {
     versionType: "published",
     source: "githubActions",
     apiKey: "",
-    downloadPlaceId: ""
+    downloadPlaceId: "",
+    packageSourcePlaceId: "",
+    packageKeys: []
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -56,6 +58,16 @@ function parseArgs(argv) {
       index += 1;
     } else if (value.startsWith("--download-place-id=")) {
       args.downloadPlaceId = value.slice("--download-place-id=".length);
+    } else if (value === "--package-source-place-id") {
+      args.packageSourcePlaceId = argv[index + 1] || "";
+      index += 1;
+    } else if (value.startsWith("--package-source-place-id=")) {
+      args.packageSourcePlaceId = value.slice("--package-source-place-id=".length);
+    } else if (value === "--update-package-keys") {
+      args.packageKeys = JSON.parse(argv[index + 1] || "[]");
+      index += 1;
+    } else if (value.startsWith("--update-package-keys=")) {
+      args.packageKeys = JSON.parse(value.slice("--update-package-keys=".length));
     }
   }
 
@@ -91,13 +103,18 @@ async function main() {
     placeId: args.placeId,
     universeId: args.universeId,
     versionType: args.versionType,
-    source: args.source
+    source: args.source,
+    packageSourcePlaceId: args.packageSourcePlaceId,
+    packageKeys: args.packageKeys
   });
 
   console.log(JSON.stringify({
     ok: true,
     file,
     download: touched.download,
+    packageSourcePlaceId: touched.packageSourcePlaceId,
+    packageUpdates: touched.packageUpdates,
+    packages: touched.packages,
     jaxonGuiPackage: touched.jaxonGuiPackage,
     mutation: touched.mutation
   }, null, 2));

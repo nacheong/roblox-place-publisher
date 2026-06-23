@@ -10,6 +10,10 @@ const els = {
   placesHint: document.querySelector("#placesHint"),
   placesList: document.querySelector("#placesList"),
   selectAllPlaces: document.querySelector("#selectAllPlaces"),
+  indexPackages: document.querySelector("#indexPackages"),
+  packagesHint: document.querySelector("#packagesHint"),
+  packagesList: document.querySelector("#packagesList"),
+  packageSourceText: document.querySelector("#packageSourceText"),
   sourceHint: document.querySelector("#sourceHint"),
   fileInput: document.querySelector("#placeFile"),
   fileZone: document.querySelector("#fileZone"),
@@ -42,6 +46,12 @@ let selectedPlaceIds = new Set();
 let lastFetchedUniverseId = "";
 let savedPlaceSelections = {};
 let savedPlacesByUniverse = {};
+let indexedPackageSourcePlaceId = "";
+let indexedPackages = [];
+let selectedPackageKeys = new Set();
+let savedPackageSelectionsBySource = {};
+let savedPackagesBySource = {};
+let isIndexingPackages = false;
 
 function getVersionType() {
   return document.querySelector("input[name='versionType']:checked")?.value || "published";
@@ -90,6 +100,54 @@ function getCachedSelection(universeId) {
     : [];
 }
 
+function getPackageSourceKey(universeId, sourcePlaceId) {
+  return `${universeId || "unknown"}:${sourcePlaceId || "unknown"}`;
+}
+
+function getCachedPackageSelection(universeId, sourcePlaceId) {
+  const key = getPackageSourceKey(universeId, sourcePlaceId);
+
+  return Array.isArray(savedPackageSelectionsBySource[key])
+    ? savedPackageSelectionsBySource[key].map(String)
+    : [];
+}
+
+function rememberCurrentPackages() {
+  const universeId = els.universeId.value.trim();
+
+  if (!/^\d+$/.test(universeId) || !/^\d+$/.test(indexedPackageSourcePlaceId)) {
+    return;
+  }
+
+  const key = getPackageSourceKey(universeId, indexedPackageSourcePlaceId);
+  savedPackagesBySource[key] = {
+    universeId,
+    sourcePlaceId: indexedPackageSourcePlaceId,
+    packages: indexedPackages
+  };
+  savedPackageSelectionsBySource[key] = Array.from(selectedPackageKeys);
+}
+
+function restoreCachedPackages(universeId, sourcePlaceId) {
+  if (!/^\d+$/.test(universeId) || !/^\d+$/.test(sourcePlaceId)) {
+    return false;
+  }
+
+  const key = getPackageSourceKey(universeId, sourcePlaceId);
+  const cached = savedPackagesBySource[key];
+
+  if (!cached || !Array.isArray(cached.packages)) {
+    return false;
+  }
+
+  indexedPackageSourcePlaceId = String(sourcePlaceId);
+  indexedPackages = cached.packages;
+  const packageKeys = new Set(indexedPackages.map((pkg) => String(pkg.key)));
+  selectedPackageKeys = new Set(getCachedPackageSelection(universeId, sourcePlaceId).filter((keyValue) => packageKeys.has(keyValue)));
+  renderPackages();
+  return true;
+}
+
 function rememberCurrentPlaces() {
   const universeId = els.universeId.value.trim();
 
@@ -99,6 +157,7 @@ function rememberCurrentPlaces() {
 
   savedPlacesByUniverse[universeId] = discoveredPlaces;
   savedPlaceSelections[universeId] = Array.from(selectedPlaceIds);
+  rememberCurrentPackages();
 }
 
 function restoreCachedPlaces(universeId) {
@@ -147,6 +206,16 @@ function getPreviewPlaceId() {
   return els.placeId.value.trim() || "{placeId}";
 }
 
+function getPackageSourceCandidatePlaceId() {
+  const targets = getPublishTargets();
+
+  return targets.length === 1 ? targets[0] : "";
+}
+
+function getSelectedPackageKeys() {
+  return Array.from(selectedPackageKeys).filter(Boolean);
+}
+
 function buildEndpoint(placeId = getPreviewPlaceId()) {
   const universeId = els.universeId.value.trim();
 
@@ -190,31 +259,42 @@ function buildCurl() {
   const placeId = previewPlaceId || "{placeId}";
   const versionType = getVersionType();
   const prefix = targets.length > 1 ? `# Repeat for selected Place IDs: ${targets.join(", ")}\n` : "";
+  const packageKeys = getSelectedPackageKeys();
+  const packageSource = packageKeys.length > 0 && indexedPackageSourcePlaceId
+    ? [
+      `# Package source place: ${indexedPackageSourcePlaceId}`,
+      `# Selected package root${packageKeys.length === 1 ? "" : "s"}: ${packageKeys.length}`,
+      "# Lune clones those source package roots into matching target package paths before publishing"
+    ].join("\n")
+    : "";
 
   if (getPublishSource() === "asset") {
     return `${prefix}${[
       "# App no-file workflow:",
       "# 1. Lune downloads the current Roblox place file through Asset Delivery",
-      "# 2. Lune updates ServerStorage.__RobloxPlacePublisher.LastPublishTouch.Value",
-      "# 3. Lune saves the touched debug .rbxl",
-      "# 4. Publish with rbxcloud",
+      packageSource,
+      "# 2. Lune updates selected package roots when the target already has them",
+      "# 3. Lune updates ServerStorage.__RobloxPlacePublisher.LastPublishTouch.Value",
+      "# 4. Lune saves the touched debug .rbxl",
+      "# 5. Publish with rbxcloud",
       "rbxcloud experience publish \\",
       "  --filename \"<downloaded-place>.rbxl\" \\",
       `  --place-id ${placeId} \\`,
       `  --universe-id ${universeId} \\`,
       `  --version-type ${versionType} \\`,
       "  --api-key \"$ROBLOX_API_KEY\""
-    ].join("\n")}`;
+    ].filter(Boolean).join("\n")}`;
   }
 
   return `${prefix}${[
+    packageSource,
     "rbxcloud experience publish \\",
     `  --filename "${fileName}" \\`,
     `  --place-id ${placeId} \\`,
     `  --universe-id ${universeId} \\`,
     `  --version-type ${versionType} \\`,
     `  --api-key "$ROBLOX_API_KEY"`
-  ].join("\n")}`;
+  ].filter(Boolean).join("\n")}`;
 }
 
 function saveSettings() {
@@ -223,20 +303,24 @@ function saveSettings() {
   const currentUniverseId = els.universeId.value.trim();
   rememberCurrentPlaces();
   const hasSavedPlaces = Object.keys(savedPlacesByUniverse).length > 0 || Object.keys(savedPlaceSelections).length > 0;
+  const hasSavedPackages = Object.keys(savedPackagesBySource).length > 0 || Object.keys(savedPackageSelectionsBySource).length > 0;
 
-  if (!rememberIds && !rememberToken && !hasSavedPlaces) {
+  if (!rememberIds && !rememberToken && !hasSavedPlaces && !hasSavedPackages) {
     localStorage.removeItem(STORAGE_KEY);
     return;
   }
 
   const settings = {
-    settingsVersion: 6,
+    settingsVersion: 7,
     versionType: getVersionType(),
     publishSource: getPublishSource(),
     rememberIds,
     rememberToken,
     placeSelectionsByUniverse: savedPlaceSelections,
-    placesByUniverse: savedPlacesByUniverse
+    placesByUniverse: savedPlacesByUniverse,
+    packageSelectionsBySource: savedPackageSelectionsBySource,
+    packagesBySource: savedPackagesBySource,
+    lastPackageSourcePlaceId: indexedPackageSourcePlaceId
   };
 
   if (/^\d+$/.test(currentUniverseId)) {
@@ -266,6 +350,9 @@ function loadSettings() {
     const settings = JSON.parse(raw);
     savedPlaceSelections = asPlainObject(settings.placeSelectionsByUniverse);
     savedPlacesByUniverse = asPlainObject(settings.placesByUniverse);
+    savedPackageSelectionsBySource = asPlainObject(settings.packageSelectionsBySource);
+    savedPackagesBySource = asPlainObject(settings.packagesBySource);
+    indexedPackageSourcePlaceId = settings.lastPackageSourcePlaceId ? String(settings.lastPackageSourcePlaceId) : "";
     els.universeId.value = settings.universeId || settings.lastUniverseId || "";
     els.placeId.value = settings.rememberIds ? settings.placeId || "" : "";
     els.rememberIds.checked = Boolean(settings.rememberIds);
@@ -356,6 +443,12 @@ function getJaxonGuiPackage(result) {
     || null;
 }
 
+function getPackageUpdates(result) {
+  return result?.packageUpdates
+    || result?.response?.packageUpdates
+    || [];
+}
+
 function formatJaxonGuiPackage(info) {
   if (!info) {
     return "";
@@ -377,6 +470,54 @@ function formatJaxonGuiPackage(info) {
   ].filter(Boolean);
 
   return `JaxonGui package: ${parts.join(", ")}`;
+}
+
+function formatPackageVersion(pkg) {
+  if (pkg.versionNumber) {
+    return `version ${pkg.versionNumber}`;
+  }
+
+  if (pkg.versionNumberReadable === false) {
+    return "version unavailable";
+  }
+
+  return "version unknown";
+}
+
+function formatPackageMeta(pkg) {
+  const parts = [
+    formatPackageVersion(pkg),
+    pkg.packageId ? `asset ${pkg.packageId}` : "",
+    pkg.autoUpdate !== undefined && pkg.autoUpdate !== null ? `AutoUpdate ${pkg.autoUpdate}` : "",
+    pkg.status ? `status ${pkg.status}` : ""
+  ].filter(Boolean);
+
+  return parts.join(", ");
+}
+
+function formatPackageUpdates(updates) {
+  if (!Array.isArray(updates) || updates.length === 0) {
+    return "";
+  }
+
+  const replaced = updates.filter((update) => update.replaced).length;
+  const skipped = updates.filter((update) => update.skipped).length;
+  const failed = updates.filter((update) => update.ok === false).length;
+  const parts = [];
+
+  if (replaced > 0) {
+    parts.push(`${replaced} replaced`);
+  }
+
+  if (skipped > 0) {
+    parts.push(`${skipped} skipped`);
+  }
+
+  if (failed > 0) {
+    parts.push(`${failed} failed`);
+  }
+
+  return parts.length > 0 ? `Packages: ${parts.join(", ")}` : "";
 }
 
 function interpretResult(result) {
@@ -558,8 +699,16 @@ function renderResponseBrief(payload, tone) {
       const debugFile = getDebugFilePath(result);
       const jaxonGuiPackage = getJaxonGuiPackage(result);
       const packageText = formatJaxonGuiPackage(jaxonGuiPackage);
+      const packageUpdateText = formatPackageUpdates(getPackageUpdates(result));
 
       item.append(title, meta, id);
+
+      if (packageUpdateText) {
+        const packageUpdates = document.createElement("span");
+        packageUpdates.className = "package-info";
+        packageUpdates.textContent = packageUpdateText;
+        item.append(packageUpdates);
+      }
 
       if (packageText) {
         const packageInfo = document.createElement("span");
@@ -637,6 +786,13 @@ function clearPlaces(message = "No places loaded.") {
   renderPlaces(message);
 }
 
+function clearPackages(message = "No packages indexed.") {
+  indexedPackageSourcePlaceId = "";
+  indexedPackages = [];
+  selectedPackageKeys = new Set();
+  renderPackages(message);
+}
+
 function renderPlaces(emptyMessage = "No places loaded.") {
   els.placesList.replaceChildren();
   els.placesList.classList.toggle("empty", discoveredPlaces.length === 0);
@@ -711,6 +867,82 @@ function renderPlaces(emptyMessage = "No places loaded.") {
   }
 }
 
+function renderPackages(emptyMessage = "No packages indexed.") {
+  els.packagesList.replaceChildren();
+  els.packagesList.classList.toggle("empty", indexedPackages.length === 0);
+  els.packagesList.classList.remove("loading");
+
+  const selectedCount = selectedPackageKeys.size;
+  const sourceLabel = indexedPackageSourcePlaceId
+    ? `${getPlaceLabel(indexedPackageSourcePlaceId)} (${indexedPackageSourcePlaceId})`
+    : "No package source selected.";
+
+  els.packageSourceText.textContent = indexedPackageSourcePlaceId
+    ? `Source: ${sourceLabel}. Selected package roots are cloned from this place.`
+    : "No package source selected.";
+
+  if (indexedPackages.length === 0) {
+    const empty = document.createElement("span");
+    empty.textContent = emptyMessage;
+    els.packagesList.append(empty);
+    els.packagesHint.textContent = "Select exactly one source place, then index packages from its saved Roblox asset.";
+    validate(false);
+    return;
+  }
+
+  els.packagesHint.textContent = `${indexedPackages.length} package${indexedPackages.length === 1 ? "" : "s"} found in source place. ${selectedCount} selected.`;
+
+  const orderedPackages = [...indexedPackages].sort((a, b) => {
+    const aSelected = selectedPackageKeys.has(String(a.key));
+    const bSelected = selectedPackageKeys.has(String(b.key));
+
+    if (aSelected !== bSelected) {
+      return aSelected ? -1 : 1;
+    }
+
+    return String(a.path || "").localeCompare(String(b.path || ""));
+  });
+
+  for (const pkg of orderedPackages) {
+    const key = String(pkg.key);
+    const isSelected = selectedPackageKeys.has(key);
+    const option = document.createElement("label");
+    option.className = `place-option package-option${isSelected ? " selected" : ""}`;
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = key;
+    checkbox.checked = isSelected;
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) {
+        selectedPackageKeys.add(key);
+      } else {
+        selectedPackageKeys.delete(key);
+      }
+
+      renderPackages();
+      validate(false);
+    });
+
+    const copy = document.createElement("div");
+    const name = document.createElement("div");
+    name.className = "place-name";
+    name.textContent = pkg.packageAssetName || pkg.defaultName || pkg.name || "Package";
+
+    const path = document.createElement("div");
+    path.className = "place-id";
+    path.textContent = pkg.path || key;
+
+    const meta = document.createElement("div");
+    meta.className = "package-card-meta";
+    meta.textContent = formatPackageMeta(pkg);
+
+    copy.append(name, path, meta);
+    option.append(checkbox, copy);
+    els.packagesList.append(option);
+  }
+}
+
 function setPlacesLoading() {
   els.placesList.replaceChildren();
   els.placesList.classList.add("loading");
@@ -718,6 +950,15 @@ function setPlacesLoading() {
   const loading = document.createElement("span");
   loading.textContent = "Finding places...";
   els.placesList.append(loading);
+}
+
+function setPackagesLoading() {
+  els.packagesList.replaceChildren();
+  els.packagesList.classList.add("loading");
+  els.packagesList.classList.remove("empty");
+  const loading = document.createElement("span");
+  loading.textContent = "Indexing packages...";
+  els.packagesList.append(loading);
 }
 
 async function fetchPlaces() {
@@ -768,12 +1009,97 @@ async function fetchPlaces() {
   }
 }
 
+async function indexPackages() {
+  const universeId = els.universeId.value.trim();
+  const sourcePlaceId = getPackageSourceCandidatePlaceId();
+
+  if (!els.apiKey.value.trim()) {
+    setStatus("Enter API key", "warning");
+    setResponse({
+      ok: false,
+      message: "Enter an API key before indexing packages."
+    }, "error");
+    return;
+  }
+
+  if (!/^\d+$/.test(universeId) || !/^\d+$/.test(sourcePlaceId)) {
+    setStatus("Select one place", "warning");
+    setResponse({
+      ok: false,
+      message: "Select exactly one source place before indexing packages."
+    }, "error");
+    return;
+  }
+
+  isIndexingPackages = true;
+  els.indexPackages.disabled = true;
+  setStatus("Indexing packages", "warning");
+  setPackagesLoading();
+
+  try {
+    const response = await fetch(`/api/packages?placeId=${encodeURIComponent(sourcePlaceId)}`, {
+      headers: {
+        "x-api-key": els.apiKey.value.trim()
+      }
+    });
+    const payload = await response.json();
+
+    if (!response.ok || !payload.ok) {
+      clearPackages(payload.message || "Unable to index packages.");
+      setStatus(`HTTP ${payload.status || response.status}`, "error");
+      setResponse(payload, "error");
+      return;
+    }
+
+    indexedPackageSourcePlaceId = sourcePlaceId;
+    indexedPackages = Array.isArray(payload.packages) ? payload.packages : [];
+    const availableKeys = new Set(indexedPackages.map((pkg) => String(pkg.key)));
+    selectedPackageKeys = new Set(getCachedPackageSelection(universeId, sourcePlaceId).filter((key) => availableKeys.has(key)));
+
+    renderPackages(indexedPackages.length === 0 ? "No packages found in this source place." : undefined);
+    setStatus(`${indexedPackages.length} packages`, indexedPackages.length > 0 ? "success" : "warning");
+    setResponse(payload, indexedPackages.length > 0 ? "success" : "warning");
+  } catch (error) {
+    clearPackages("Unable to index packages.");
+    setStatus("Index failed", "error");
+    setResponse({
+      ok: false,
+      message: error instanceof Error ? error.message : "Unable to index packages."
+    }, "error");
+  } finally {
+    isIndexingPackages = false;
+    validate(false);
+  }
+}
+
+function updatePackageControls() {
+  const sourcePlaceId = getPackageSourceCandidatePlaceId();
+  const canIndex = Boolean(els.apiKey.value.trim()) && /^\d+$/.test(sourcePlaceId) && !isIndexingPackages && !isPublishing;
+
+  els.indexPackages.disabled = !canIndex;
+
+  if (indexedPackageSourcePlaceId && indexedPackages.length > 0) {
+    return;
+  }
+
+  const targets = getPublishTargets();
+
+  if (targets.length === 1) {
+    els.packagesHint.textContent = "Index this selected place if it contains the package copy you want to clone.";
+  } else if (targets.length > 1) {
+    els.packagesHint.textContent = "Select exactly one source place to index packages; after indexing, select your publish targets.";
+  } else {
+    els.packagesHint.textContent = "Select exactly one source place, then index packages from its saved Roblox asset.";
+  }
+}
+
 function validate(showErrors = false) {
   const errors = [];
   const universeId = els.universeId.value.trim();
   const manualPlaceId = els.placeId.value.trim();
   const targets = getPublishTargets();
   const isFileSource = getPublishSource() === "file";
+  const packageKeys = getSelectedPackageKeys();
 
   if (!els.apiKey.value.trim()) {
     errors.push("Enter an API key.");
@@ -799,10 +1125,15 @@ function validate(showErrors = false) {
     errors.push("The selected file must end in .rbxl.");
   }
 
-  els.publishButton.disabled = errors.length > 0 || isPublishing || isFetchingPlaces;
+  if (packageKeys.length > 0 && !/^\d+$/.test(indexedPackageSourcePlaceId)) {
+    errors.push("Index a package source place before publishing package replacements.");
+  }
+
+  els.publishButton.disabled = errors.length > 0 || isPublishing || isFetchingPlaces || isIndexingPackages;
   els.formErrors.textContent = showErrors && errors.length > 0 ? errors.join(" ") : "";
   els.formErrors.classList.toggle("visible", showErrors && errors.length > 0);
 
+  updatePackageControls();
   updatePreview();
   saveSettings();
 
@@ -821,7 +1152,11 @@ function updatePreview() {
     : targets.length > 1
       ? "Same .rbxl to each target"
       : "Local .rbxl file";
-  els.targetText.textContent = describeTargets(targets);
+  const packageCount = getSelectedPackageKeys().length;
+  const packageText = packageCount > 0
+    ? `; ${packageCount} source package${packageCount === 1 ? "" : "s"} from ${indexedPackageSourcePlaceId}`
+    : "";
+  els.targetText.textContent = `${describeTargets(targets)}${packageText}`;
   els.curlPreview.textContent = buildCurl();
 
   const universeId = els.universeId.value.trim();
@@ -887,6 +1222,13 @@ async function publishPlace() {
       const headers = {
         "x-api-key": els.apiKey.value.trim()
       };
+      const packageKeys = getSelectedPackageKeys();
+
+      if (packageKeys.length > 0) {
+        headers["x-package-source-place-id"] = indexedPackageSourcePlaceId;
+        headers["x-package-keys"] = JSON.stringify(packageKeys);
+      }
+
       const request = {
         method: "POST",
         headers
@@ -931,6 +1273,8 @@ async function publishPlace() {
     source,
     file: source === "file" ? selectedFile.name : null,
     versionType: getVersionType(),
+    packageSourcePlaceId: indexedPackageSourcePlaceId || null,
+    selectedPackages: getSelectedPackageKeys().length,
     targets: results.length,
     succeeded,
     results
@@ -977,6 +1321,8 @@ function resetForm() {
   selectedFile = null;
   savedPlaceSelections = {};
   savedPlacesByUniverse = {};
+  savedPackageSelectionsBySource = {};
+  savedPackagesBySource = {};
   els.fileInput.value = "";
   els.responseOutput.hidden = true;
   els.responseBrief.hidden = true;
@@ -987,6 +1333,7 @@ function resetForm() {
   setStatus("Ready", "neutral");
   localStorage.removeItem(STORAGE_KEY);
   clearPlaces();
+  clearPackages();
   updateFile(null);
   updatePublishSourceUi();
 }
@@ -1007,6 +1354,7 @@ function bindEvents() {
   });
 
   els.fetchPlaces.addEventListener("click", fetchPlaces);
+  els.indexPackages.addEventListener("click", indexPackages);
   els.fileInput.addEventListener("change", () => updateFile(els.fileInput.files?.[0]));
 
   els.selectAllPlaces.addEventListener("change", () => {
@@ -1064,6 +1412,10 @@ function bindEvents() {
         if (!restoreCachedPlaces(universeId)) {
           clearPlaces("Universe changed. Find places again.");
         }
+
+        if (!restoreCachedPackages(universeId, indexedPackageSourcePlaceId)) {
+          clearPackages("Universe changed. Index packages again.");
+        }
       }
 
       validate(false);
@@ -1088,6 +1440,9 @@ bindEvents();
 updatePublishSourceUi();
 if (!restoreCachedPlaces(els.universeId.value.trim())) {
   renderPlaces();
+}
+if (!restoreCachedPackages(els.universeId.value.trim(), indexedPackageSourcePlaceId)) {
+  renderPackages();
 }
 updatePreview();
 validate(false);

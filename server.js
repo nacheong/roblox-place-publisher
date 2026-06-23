@@ -4,7 +4,7 @@ const http = require("node:http");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { URL } = require("node:url");
-const { touchPlaceFile, verifyPlaceMarker } = require("./lib/place-touch.cjs");
+const { indexPlacePackages, touchPlaceFile, verifyPlaceMarker } = require("./lib/place-touch.cjs");
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 4173);
@@ -318,6 +318,7 @@ function validatePublishRequest(req, searchParams) {
   const originalFilename = (searchParams.get("filename") || "").trim();
   const fileExtension = getPlaceFileExtension(originalFilename);
   const contentLength = req.headers["content-length"];
+  const packageOptions = parsePackagePublishHeaders(req);
 
   const errors = [];
 
@@ -345,6 +346,8 @@ function validatePublishRequest(req, searchParams) {
     errors.push("A place file is required.");
   }
 
+  errors.push(...packageOptions.errors);
+
   return {
     apiKey,
     universeId,
@@ -352,6 +355,8 @@ function validatePublishRequest(req, searchParams) {
     versionType,
     originalFilename,
     fileExtension,
+    packageSourcePlaceId: packageOptions.packageSourcePlaceId,
+    packageKeys: packageOptions.packageKeys,
     errors
   };
 }
@@ -361,6 +366,7 @@ function validateAssetPublishRequest(req, searchParams) {
   const universeId = (searchParams.get("universeId") || "").trim();
   const placeId = (searchParams.get("placeId") || "").trim();
   const versionType = (searchParams.get("versionType") || "published").trim().toLowerCase();
+  const packageOptions = parsePackagePublishHeaders(req);
   const errors = [];
 
   if (!apiKey || Array.isArray(apiKey)) {
@@ -379,11 +385,49 @@ function validateAssetPublishRequest(req, searchParams) {
     errors.push("Version type must be published or saved.");
   }
 
+  errors.push(...packageOptions.errors);
+
   return {
     apiKey,
     universeId,
     placeId,
     versionType,
+    packageSourcePlaceId: packageOptions.packageSourcePlaceId,
+    packageKeys: packageOptions.packageKeys,
+    errors
+  };
+}
+
+function parsePackagePublishHeaders(req) {
+  const errors = [];
+  const rawSourcePlaceId = req.headers["x-package-source-place-id"];
+  const rawPackageKeys = req.headers["x-package-keys"];
+  const packageSourcePlaceId = Array.isArray(rawSourcePlaceId) ? "" : String(rawSourcePlaceId || "").trim();
+  let packageKeys = [];
+
+  if (Array.isArray(rawPackageKeys)) {
+    errors.push("Package selection header must be a single JSON array.");
+  } else if (rawPackageKeys) {
+    try {
+      const parsed = JSON.parse(String(rawPackageKeys));
+
+      if (!Array.isArray(parsed)) {
+        errors.push("Package selection header must be a JSON array.");
+      } else {
+        packageKeys = Array.from(new Set(parsed.map((key) => String(key || "").trim()).filter(Boolean)));
+      }
+    } catch {
+      errors.push("Package selection header must be valid JSON.");
+    }
+  }
+
+  if (packageKeys.length > 0 && !/^\d+$/.test(packageSourcePlaceId)) {
+    errors.push("Package source Place ID is required when package replacements are selected.");
+  }
+
+  return {
+    packageSourcePlaceId,
+    packageKeys,
     errors
   };
 }
@@ -524,7 +568,52 @@ async function handlePlaces(req, res, requestUrl) {
   });
 }
 
-async function publishToRoblox({ apiKey, universeId, placeId, versionType, originalFilename, fileExtension, body, source }) {
+async function handlePackages(req, res, requestUrl) {
+  const apiKey = req.headers["x-api-key"];
+  const placeId = (requestUrl.searchParams.get("placeId") || "").trim();
+
+  if (!apiKey || Array.isArray(apiKey)) {
+    sendJson(res, 400, {
+      ok: false,
+      errors: ["API key is required."]
+    });
+    return;
+  }
+
+  if (!/^\d+$/.test(placeId)) {
+    sendJson(res, 400, {
+      ok: false,
+      errors: ["Place ID must be a number."]
+    });
+    return;
+  }
+
+  try {
+    const result = await indexPlacePackages({
+      apiKey,
+      placeId
+    });
+
+    sendJson(res, 200, {
+      ...result,
+      sourcePlaceId: placeId
+    });
+  } catch (error) {
+    const payload = error?.payload || {};
+
+    sendJson(res, payload.status || 502, {
+      ok: false,
+      status: payload.status || 502,
+      statusText: payload.statusText || "Package indexing failed",
+      placeId,
+      assetDeliveryEndpoint: payload.assetDeliveryEndpoint,
+      body: payload.body,
+      message: error instanceof Error ? error.message : "Unable to index packages for this place."
+    });
+  }
+}
+
+async function publishToRoblox({ apiKey, universeId, placeId, versionType, originalFilename, fileExtension, body, source, packageSourcePlaceId, packageKeys }) {
   const command = resolveRbxcloudCommand();
 
   if (!command) {
@@ -569,10 +658,13 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
   try {
     touched = await touchPlaceFile({
       file: debugFile,
+      apiKey,
       placeId,
       universeId,
       versionType,
-      source
+      source,
+      packageSourcePlaceId,
+      packageKeys
     });
   } catch (error) {
     return {
@@ -587,6 +679,9 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
       debugFile,
       debugDirectory: DEBUG_PLACE_DIR,
       contentBytes: buffer.length,
+      packageSourcePlaceId,
+      packageUpdates: error?.payload?.packageUpdates,
+      packages: error?.payload?.packages,
       message: error instanceof Error ? error.message : "Unable to mutate place file before publishing."
     };
   }
@@ -615,6 +710,9 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
     latestDebugFile,
     debugDirectory: DEBUG_PLACE_DIR,
     mutation: touched.mutation,
+    packageSourcePlaceId: touched.packageSourcePlaceId,
+    packageUpdates: touched.packageUpdates,
+    packages: touched.packages,
     jaxonGuiPackage: touched.jaxonGuiPackage,
     originalContentBytes: buffer.length,
     contentBytes: mutatedStats.size
@@ -707,7 +805,7 @@ async function applyPublishedVerification({ result, apiKey, placeId, versionType
   };
 }
 
-async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, versionType }) {
+async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, versionType, packageSourcePlaceId, packageKeys }) {
   const command = resolveRbxcloudCommand();
   const originalFilename = `place-${placeId}.rbxl`;
 
@@ -742,7 +840,9 @@ async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, version
       placeId,
       universeId,
       versionType,
-      source: "assetDelivery"
+      source: "assetDelivery",
+      packageSourcePlaceId,
+      packageKeys
     });
   } catch (error) {
     const payload = error?.payload || {};
@@ -760,6 +860,9 @@ async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, version
       debugFile,
       debugDirectory: DEBUG_PLACE_DIR,
       assetDeliveryEndpoint: payload.assetDeliveryEndpoint,
+      packageSourcePlaceId,
+      packageUpdates: payload.packageUpdates,
+      packages: payload.packages,
       body: payload.body,
       message: error instanceof Error ? error.message : "Unable to download and mutate place file before publishing."
     };
@@ -799,6 +902,10 @@ async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, version
     assetDeliveryEndpoint: touched.download?.assetDeliveryEndpoint,
     downloadLocation: touched.download?.downloadLocation,
     mutation: touched.mutation,
+    packageSourcePlaceId: touched.packageSourcePlaceId,
+    packageSourceDownload: touched.packageSourceDownload,
+    packageUpdates: touched.packageUpdates,
+    packages: touched.packages,
     jaxonGuiPackage: touched.jaxonGuiPackage,
     originalContentBytes: touched.download?.contentBytes ?? touched.mutation?.originalBytes,
     sourceContentBytes: touched.download?.contentBytes,
@@ -827,7 +934,9 @@ async function handlePublish(req, res, requestUrl) {
       originalFilename: validation.originalFilename,
       fileExtension: validation.fileExtension,
       body: req,
-      source: "localFile"
+      source: "localFile",
+      packageSourcePlaceId: validation.packageSourcePlaceId,
+      packageKeys: validation.packageKeys
     });
 
     sendJson(res, result.status, result);
@@ -860,7 +969,9 @@ async function handlePublishAsset(req, res, requestUrl) {
       apiKey: validation.apiKey,
       universeId: validation.universeId,
       placeId: validation.placeId,
-      versionType: validation.versionType
+      versionType: validation.versionType,
+      packageSourcePlaceId: validation.packageSourcePlaceId,
+      packageKeys: validation.packageKeys
     });
 
     sendJson(res, result.status, result);
@@ -936,6 +1047,11 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "GET" && requestUrl.pathname === "/api/places") {
     handlePlaces(req, res, requestUrl);
+    return;
+  }
+
+  if (req.method === "GET" && requestUrl.pathname === "/api/packages") {
+    handlePackages(req, res, requestUrl);
     return;
   }
 

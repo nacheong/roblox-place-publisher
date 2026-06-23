@@ -86,10 +86,15 @@ npm start
 2. Enter the experience's Universe ID.
 3. Click the search icon beside **Universe ID** to load associated places.
 4. Select one or more places with the checkboxes, or enter a manual Place ID.
-5. Leave **Publish source** on **Roblox asset** for no-file publishing.
-6. Choose `Published` or `Saved`.
-7. Review the generated rbxcloud workflow preview.
-8. Click **Publish**.
+5. Optional package replacement workflow:
+   - Select exactly one source place, such as the place where you already updated `StarterGui.JaxonGui`.
+   - Click **Index** in **Package Replacements**.
+   - Check the package roots you want to clone from that source place.
+   - Select the final target places to publish. Targets that do not already have that package at the same path are skipped.
+6. Leave **Publish source** on **Roblox asset** for no-file publishing.
+7. Choose `Published` or `Saved`.
+8. Review the generated rbxcloud workflow preview.
+9. Click **Publish**.
 
 You can get IDs from the Roblox Studio command bar:
 
@@ -101,14 +106,25 @@ print(game.GameId)
 For the default no-file flow, the local server asks Lune to:
 
 1. Download the current delivered place asset bytes from Roblox Asset Delivery.
-2. Update `ServerStorage.__RobloxPlacePublisher.LastPublishTouch.Value`.
-3. Save the mutated bytes under `debug-place-files/`.
-4. Return the debug `.rbxl` path so the server can run `rbxcloud experience publish`.
-5. Re-download the published place and verify the `LastPublishTouch` value matches the debug file.
+2. If package replacements are selected, download the package source place, clone the selected package roots from that place, and replace matching package roots in the target place.
+3. Update `ServerStorage.__RobloxPlacePublisher.LastPublishTouch.Value`.
+4. Save the mutated bytes under `debug-place-files/`.
+5. Return the debug `.rbxl` path so the server can run `rbxcloud experience publish`.
+6. Re-download the published place and verify the `LastPublishTouch` value matches the debug file.
 
 The instance touch makes the file bytes change on each publish by editing a tiny `StringValue` under `ServerStorage`.
 If rbxcloud accepts the publish but the re-downloaded place does not contain the expected value, the app reports **Publish not verified** instead of a clean success.
 Publish results also include a `StarterGui.JaxonGui` package probe with its `PackageLink.VersionNumber`, `PackageId`, `AutoUpdate`, and status when those fields are available. If `VersionNumber` is not readable from the downloaded place file, the raw response includes the read error.
+
+## Package Replacement Flow
+
+Use **Package Replacements** when Studio package auto-update is not showing up in live servers.
+
+The indexed source place should already contain the package copy you want everywhere else. For example, if you updated `StarterGui.JaxonGui` in Place3, select only Place3, click **Index**, choose `StarterGui.JaxonGui`, then select Place1, Place2, and any other targets before publishing.
+
+During publish, Lune downloads the source place and each target place. For every selected package, it replaces the target package root only when the target already has the same package path and matching `PackageId`. Missing packages and different packages are skipped instead of failing the whole batch.
+
+The replacement is a real instance-level remove and replace: the source package root is serialized as a model, deserialized into the target place, parented into the old target package's parent, and the old package root is destroyed. The debug `.rbxl` saved for each target is the exact file passed to rbxcloud.
 
 The publish command follows the rbxcloud docs:
 
@@ -203,7 +219,7 @@ Use **Remember token** to store the API key locally in this browser's `localStor
 
 This is convenient for a local workflow, but it is not encrypted. Avoid using it on shared machines.
 
-Use **Reset** to clear remembered IDs, remembered token, selected places, selected file state, and response output.
+Use **Reset** to clear remembered IDs, remembered token, selected places, indexed package selections, selected file state, and response output.
 
 ## Project Structure
 
@@ -217,7 +233,7 @@ foreman.toml        Foreman rbxcloud and Lune tool pins
 scripts/touch-place-file.mjs
                     CLI used by GitHub Actions to touch a place before publish
 scripts/touch-place-file.luau
-                    Lune script that downloads/touches/saves place files
+                    Lune script that downloads/indexes/replaces/touches/saves place files
 debug-place-files/ Saved debug copies of place files, ignored by Git
 public/index.html   App markup
 public/styles.css   App styles
@@ -244,10 +260,13 @@ GitHub Actions also builds portable packages for Windows, Linux, and macOS on pu
 - `404`: Verify the Universe ID and Place ID.
 - `429`: Roblox is rate limiting publish requests. Wait, then retry a smaller batch.
 - Empty place list: verify the Universe ID, then use manual Place ID as a fallback.
+- Package source is stale: the package replacement flow clones the package from the indexed source place's delivered Roblox asset. Open the saved debug file or the source place in Studio to confirm the selected package is already the updated one before publishing.
+- Package skipped: the target place did not already have that package at the same path, or the path contained a different `PackageId`.
 - Package updates not appearing live: the **Roblox asset** source republishes Roblox's currently delivered place asset. It cannot see unsaved Studio session edits.
 
 ## Roblox Docs
 
 - https://sleitnick.github.io/rbxcloud/cli/cli-experience/
+- https://lune-org.github.io/docs/api-reference/roblox/
 - https://create.roblox.com/docs/cloud/guides/usage-place-publishing
 - https://create.roblox.com/docs/cloud/reference/features/places

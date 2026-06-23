@@ -46,6 +46,13 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.secondary-button:disabled,
+.ghost-button:disabled,
+.panel-action:disabled,
+.icon-button:disabled {
+  opacity: 0.58;
+}
+
 .app-shell {
   width: min(1180px, calc(100vw - 32px));
   margin: 0 auto;
@@ -463,6 +470,42 @@ select:focus,
   font-weight: 900;
 }
 
+.packages-picker {
+  background: #fcfdfb;
+}
+
+.packages-list {
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  max-height: 260px;
+}
+
+.package-note {
+  margin: -4px 0 0;
+}
+
+.package-source {
+  overflow-wrap: anywhere;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.package-option {
+  min-height: 112px;
+}
+
+.package-card-meta {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .file-zone {
   position: relative;
   display: grid;
@@ -616,6 +659,11 @@ select:focus,
   background: #ffffff;
   border-color: var(--border);
   color: var(--text);
+}
+
+.compact-button {
+  min-height: 38px;
+  padding: 0 12px;
 }
 
 .ghost-button {

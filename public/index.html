@@ -81,6 +81,24 @@
               </div>
             </section>
 
+            <section class="places-picker packages-picker" aria-labelledby="packages-title">
+              <div class="places-toolbar">
+                <div>
+                  <h3 id="packages-title">Package Replacements</h3>
+                  <p id="packagesHint">Select exactly one source place, then index packages from its saved Roblox asset.</p>
+                </div>
+                <button class="secondary-button compact-button" id="indexPackages" type="button" disabled>
+                  <i data-lucide="package-search"></i>
+                  <span>Index</span>
+                </button>
+              </div>
+              <p class="field-note package-note">Use a source place where the selected package is already the updated copy. Publishing clones that package root into matching package paths only; target places that do not already have it are skipped.</p>
+              <div class="package-source" id="packageSourceText">No package source selected.</div>
+              <div class="places-list packages-list empty" id="packagesList">
+                <span>No packages indexed.</span>
+              </div>
+            </section>
+
             <div class="field">
               <label>Publish source</label>
               <div class="segmented source-segmented" role="radiogroup" aria-label="Publish source">
