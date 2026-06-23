@@ -154,7 +154,7 @@ function buildEndpoint(placeId = getPreviewPlaceId()) {
   }
 
   if (getPublishSource() === "asset") {
-    return `rbxcloud assets get --asset-id ${placeId} -> rbxcloud experience publish`;
+    return `Roblox Asset Delivery -> rbxcloud experience publish for ${placeId}`;
   }
 
   return `rbxcloud experience publish --universe-id ${universeId} --place-id ${placeId}`;
@@ -193,8 +193,7 @@ function buildCurl() {
   if (getPublishSource() === "asset") {
     return `${prefix}${[
       "# App no-file workflow:",
-      `rbxcloud assets get --asset-id ${placeId} --api-key "$ROBLOX_API_KEY"`,
-      "# The local server downloads the current Roblox place asset bytes, then runs:",
+      "# The local server downloads the current Roblox place file through Asset Delivery, then runs:",
       "rbxcloud experience publish \\",
       "  --filename \"<downloaded-place>.rbxl\" \\",
       `  --place-id ${placeId} \\`,
@@ -359,13 +358,6 @@ function interpretResult(result) {
     return {
       title: "API key rejected",
       detail: "Roblox did not accept the API key. Recheck the token text, expiration, and any IP restrictions."
-    };
-  }
-
-  if (status === 403 && lowerMessage.includes("asset:read")) {
-    return {
-      title: "Missing asset:read",
-      detail: "The key cannot read Roblox asset metadata. Add the asset:read scope, then retry."
     };
   }
 
@@ -548,8 +540,8 @@ function updatePublishSourceUi() {
       els.fileMeta.textContent = ".rbxl from Studio";
     }
   } else {
-    els.sourceHint.textContent = "No file picker: reads the current place asset from Roblox, then republishes it with rbxcloud.";
-    els.fileMeta.textContent = "Roblox asset source selected.";
+    els.sourceHint.textContent = "No file picker: downloads the current place file from Roblox Asset Delivery, then republishes it with rbxcloud.";
+    els.fileMeta.textContent = "Asset Delivery source selected.";
   }
 }
 
@@ -738,9 +730,9 @@ function updatePreview() {
   const source = getPublishSource();
 
   els.endpointText.textContent = endpoint.includes("{selectedPlaceId}") ? "rbxcloud workflow for selected places" : endpoint || "Waiting for IDs";
-  els.fileText.textContent = source === "asset" ? "Roblox asset" : selectedFile ? selectedFile.name : "Waiting for .rbxl";
+  els.fileText.textContent = source === "asset" ? "Asset Delivery" : selectedFile ? selectedFile.name : "Waiting for .rbxl";
   els.sourceText.textContent = source === "asset"
-    ? "Roblox asset copy"
+    ? "Asset Delivery copy"
     : targets.length > 1
       ? "Same .rbxl to each target"
       : "Local .rbxl file";
@@ -798,7 +790,7 @@ async function publishPlace() {
   els.publishButton.disabled = true;
   setStatus("Publishing", "warning");
   setResponse(source === "asset"
-    ? `Publishing Roblox asset copy to ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`
+    ? `Publishing Asset Delivery copy to ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`
     : `Publishing ${selectedFile.name} to ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`, "neutral");
 
   const results = [];

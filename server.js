@@ -204,70 +204,6 @@ function runRbxcloudPublish({ command, apiKey, universeId, placeId, versionType,
   });
 }
 
-function runRbxcloudAssetGet({ command, apiKey, assetId }) {
-  const args = [
-    "assets",
-    "get",
-    "--asset-id",
-    assetId
-  ];
-
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      env: {
-        ...process.env,
-        RBXCLOUD_API_KEY: apiKey
-      },
-      shell: false,
-      windowsHide: true
-    });
-    const stdout = [];
-    const stderr = [];
-
-    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
-    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
-
-    child.on("error", (error) => {
-      resolve({
-        ok: false,
-        status: 502,
-        statusText: "rbxcloud failed",
-        body: null,
-        message: error instanceof Error ? error.message : "Unable to start rbxcloud."
-      });
-    });
-
-    child.on("exit", (code) => {
-      const stdoutText = Buffer.concat(stdout).toString("utf8").trim();
-      const stderrText = Buffer.concat(stderr).toString("utf8").trim();
-      const body = parseMaybeJson(stdoutText);
-
-      if (code === 0) {
-        resolve({
-          ok: true,
-          status: 200,
-          statusText: "OK",
-          body,
-          rbxcloudExitCode: code
-        });
-        return;
-      }
-
-      const parsedError = parseRbxcloudError(stderrText || stdoutText);
-
-      resolve({
-        ok: false,
-        status: parsedError.status,
-        statusText: "rbxcloud failed",
-        body: body || null,
-        rbxcloudExitCode: code,
-        message: parsedError.message,
-        stderr: stderrText
-      });
-    });
-  });
-}
-
 function parseMaybeJson(text) {
   if (!text) {
     return null;
@@ -671,7 +607,7 @@ async function handlePublishAsset(req, res, requestUrl) {
       ok: false,
       status: 502,
       statusText: "rbxcloud unavailable",
-      endpoint: "rbxcloud assets get",
+      endpoint: "rbxcloud experience publish",
       publisher: "rbxcloud",
       message: "rbxcloud was not found. Install it on PATH, set RBXCLOUD_PATH, or use a portable build that bundles it."
     });
@@ -679,23 +615,6 @@ async function handlePublishAsset(req, res, requestUrl) {
   }
 
   try {
-    const assetInfo = await runRbxcloudAssetGet({
-      command,
-      apiKey: validation.apiKey,
-      assetId: validation.placeId
-    });
-
-    if (!assetInfo.ok) {
-      sendJson(res, assetInfo.status || 502, {
-        ...assetInfo,
-        endpoint: "rbxcloud assets get",
-        publisher: "rbxcloud",
-        source: "robloxAsset",
-        message: assetInfo.message || "Unable to read the place asset metadata with rbxcloud assets get."
-      });
-      return;
-    }
-
     const placeFile = await downloadPlaceFileFromAssetDelivery(validation.apiKey, validation.placeId);
 
     if (!placeFile.ok) {
@@ -704,7 +623,6 @@ async function handlePublishAsset(req, res, requestUrl) {
         status: placeFile.status || 502,
         statusText: placeFile.statusText || "Asset delivery failed",
         source: "robloxAsset",
-        assetInfo: assetInfo.body,
         assetDeliveryEndpoint: placeFile.assetDeliveryEndpoint,
         body: placeFile.body,
         message: placeFile.message || "Unable to download the place asset from Roblox."
@@ -725,7 +643,6 @@ async function handlePublishAsset(req, res, requestUrl) {
     sendJson(res, result.status, {
       ...result,
       source: "robloxAsset",
-      assetInfo: assetInfo.body,
       assetDeliveryEndpoint: placeFile.assetDeliveryEndpoint,
       sourceContentBytes: placeFile.contentBytes
     });

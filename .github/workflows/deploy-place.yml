@@ -1,0 +1,122 @@
+name: Deploy Roblox place
+
+on:
+  workflow_dispatch:
+    inputs:
+      universe_id:
+        description: "Roblox Universe ID. Defaults to repository variable ROBLOX_UNIVERSE_ID."
+        required: false
+      place_ids:
+        description: "Place ID or comma-separated Place IDs. Defaults to ROBLOX_PLACE_IDS or ROBLOX_PLACE_ID."
+        required: false
+      place_file:
+        description: "Path to the .rbxl file in the repository. Defaults to ROBLOX_PLACE_FILE."
+        required: false
+      version_type:
+        description: "published updates live game; saved only updates the saved version."
+        required: false
+        default: "published"
+        type: choice
+        options:
+          - published
+          - saved
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/deploy-place.yml"
+      - "aftman.toml"
+      - "**/*.rbxl"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Publish place file
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || (vars.ROBLOX_UNIVERSE_ID != '' && vars.ROBLOX_PLACE_FILE != '' && (vars.ROBLOX_PLACE_IDS != '' || vars.ROBLOX_PLACE_ID != '')) }}
+    env:
+      API_KEY: ${{ secrets.ROBLOX_API_KEY }}
+      UNIVERSE_ID: ${{ github.event.inputs.universe_id || vars.ROBLOX_UNIVERSE_ID }}
+      PLACE_IDS: ${{ github.event.inputs.place_ids || vars.ROBLOX_PLACE_IDS || vars.ROBLOX_PLACE_ID }}
+      PLACE_FILE: ${{ github.event.inputs.place_file || vars.ROBLOX_PLACE_FILE }}
+      VERSION_TYPE: ${{ github.event.inputs.version_type || vars.ROBLOX_VERSION_TYPE || 'published' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Aftman tools
+        uses: ok-nick/setup-aftman@v0.4.2
+
+      - name: Validate deploy settings
+        shell: bash
+        run: |
+          missing=0
+
+          if [[ -z "$API_KEY" ]]; then
+            echo "::error::Missing GitHub Actions secret ROBLOX_API_KEY."
+            missing=1
+          fi
+
+          if [[ -z "$UNIVERSE_ID" ]]; then
+            echo "::error::Missing Universe ID. Set repository variable ROBLOX_UNIVERSE_ID or workflow input universe_id."
+            missing=1
+          elif [[ ! "$UNIVERSE_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::Universe ID must be numeric."
+            missing=1
+          fi
+
+          if [[ -z "$PLACE_IDS" ]]; then
+            echo "::error::Missing Place ID(s). Set ROBLOX_PLACE_IDS, ROBLOX_PLACE_ID, or workflow input place_ids."
+            missing=1
+          fi
+
+          if [[ -z "$PLACE_FILE" ]]; then
+            echo "::error::Missing place file path. Set ROBLOX_PLACE_FILE or workflow input place_file."
+            missing=1
+          elif [[ ! -f "$PLACE_FILE" ]]; then
+            echo "::error::Place file '$PLACE_FILE' was not found in the checked-out repository."
+            missing=1
+          elif [[ "$PLACE_FILE" != *.rbxl ]]; then
+            echo "::error::Place file must end in .rbxl."
+            missing=1
+          fi
+
+          if [[ "$VERSION_TYPE" != "published" && "$VERSION_TYPE" != "saved" ]]; then
+            echo "::error::Version type must be 'published' or 'saved'."
+            missing=1
+          fi
+
+          if [[ "$missing" -ne 0 ]]; then
+            exit 1
+          fi
+
+      - name: Verify rbxcloud
+        run: rbxcloud --version
+
+      - name: Publish
+        shell: bash
+        run: |
+          mapfile -t target_place_ids < <(printf "%s" "$PLACE_IDS" | awk 'BEGIN { RS = "[,[:space:]]+" } NF { print }')
+
+          if [[ "${#target_place_ids[@]}" -eq 0 ]]; then
+            echo "::error::No valid Place IDs were provided."
+            exit 1
+          fi
+
+          for place_id in "${target_place_ids[@]}"; do
+            if [[ ! "$place_id" =~ ^[0-9]+$ ]]; then
+              echo "::error::Place ID '$place_id' must be numeric."
+              exit 1
+            fi
+
+            echo "Publishing $PLACE_FILE to place $place_id as $VERSION_TYPE"
+            rbxcloud experience publish \
+              --filename "$PLACE_FILE" \
+              --place-id "$place_id" \
+              --universe-id "$UNIVERSE_ID" \
+              --version-type "$VERSION_TYPE" \
+              --api-key "$API_KEY"
+          done
