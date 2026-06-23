@@ -32,7 +32,7 @@
             <div class="panel-heading">
             <div>
               <h2 id="publish-title">Quick Publish</h2>
-              <p>Use an API key with <strong>universe-places:write</strong>, <strong>asset:read</strong>, and <strong>legacy-asset:manage</strong>.</p>
+              <p>Use an API key with <strong>universe-places:write</strong>.</p>
             </div>
             <span class="status-pill neutral" id="statusPill">Ready</span>
           </div>
@@ -81,56 +81,28 @@
               </div>
             </section>
 
-            <div class="field">
-              <label>Publish source</label>
-              <div class="segmented source-segmented" role="radiogroup" aria-label="Publish source">
-                <label>
-                  <input type="radio" name="publishSource" value="saved" checked>
-                  <span>Latest saved version</span>
-                </label>
-                <label>
-                  <input type="radio" name="publishSource" value="file">
-                  <span>Local file</span>
-                </label>
-                <label>
-                  <input type="radio" name="publishSource" value="current">
-                  <span>Published asset copy</span>
-                </label>
-              </div>
-              <p class="field-note" id="sourceHint">Recommended for package rollouts: publish the newest saved version created by Studio package updates.</p>
-            </div>
-
-            <div class="field-grid two">
+            <div class="field-grid one">
               <div class="field">
                 <label>Version type</label>
                 <div class="segmented" role="radiogroup" aria-label="Version type">
                   <label>
-                    <input type="radio" name="versionType" value="Published" checked>
+                    <input type="radio" name="versionType" value="published" checked>
                     <span>Published</span>
                   </label>
                   <label>
-                    <input type="radio" name="versionType" value="Saved">
+                    <input type="radio" name="versionType" value="saved">
                     <span>Saved</span>
                   </label>
                 </div>
               </div>
-
-              <div class="field">
-                <label for="contentType">Content type</label>
-                <select id="contentType" name="contentType">
-                  <option value="auto">Auto from file</option>
-                  <option value="application/octet-stream">Binary .rbxl</option>
-                  <option value="application/xml">XML .rbxlx</option>
-                </select>
-              </div>
             </div>
 
             <div class="file-zone" id="fileZone">
-              <input id="placeFile" name="placeFile" type="file" accept=".rbxl,.rbxlx">
+              <input id="placeFile" name="placeFile" type="file" accept=".rbxl">
               <i data-lucide="file-up"></i>
               <div>
                 <strong id="fileTitle">Choose a place file</strong>
-                <span id="fileMeta">.rbxl or .rbxlx from Studio</span>
+                <span id="fileMeta">.rbxl from Studio</span>
               </div>
             </div>
 
@@ -146,9 +118,9 @@
               </label>
 
               <div class="checks" aria-label="Request facts">
+                <span>rbxcloud</span>
                 <span>.rbxl</span>
-                <span>.rbxlx</span>
-                <span>30/min</span>
+                <span>publish</span>
               </div>
             </div>
 
@@ -161,7 +133,7 @@
               </button>
               <button class="secondary-button" id="copyCurl" type="button">
                 <i data-lucide="copy"></i>
-                <span>Copy curl</span>
+                <span>Copy command</span>
               </button>
               <button class="ghost-button" id="resetForm" type="button">
                 <i data-lucide="rotate-ccw"></i>
@@ -183,12 +155,12 @@
                 <dd id="endpointText">Waiting for IDs</dd>
               </div>
               <div>
-                <dt>Content type</dt>
-                <dd id="contentTypeText">application/octet-stream</dd>
+                <dt>File</dt>
+                <dd id="fileText">Waiting for .rbxl</dd>
               </div>
               <div>
                 <dt>Source</dt>
-                <dd id="sourceText">Latest saved version</dd>
+                <dd id="sourceText">Local .rbxl file</dd>
               </div>
               <div>
                 <dt>Targets</dt>
@@ -210,6 +182,7 @@
               <i data-lucide="square-terminal"></i>
               <span>No publish attempt yet.</span>
             </div>
+            <div class="response-brief" id="responseBrief" hidden></div>
             <pre class="response-output" id="responseOutput" hidden></pre>
           </section>
         </aside>

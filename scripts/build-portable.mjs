@@ -9,12 +9,15 @@ const DIST_DIR = path.join(ROOT, "dist");
 const CACHE_DIR = path.join(ROOT, ".portable-cache");
 const APP_NAME = "roblox-place-publisher";
 const DEFAULT_TARGETS = ["win-x64", "linux-x64", "macos-x64", "macos-arm64"];
+const RBXCLOUD_VERSION = process.env.RBXCLOUD_VERSION || "0.17.0";
 
 const TARGETS = {
   "win-x64": {
     nodePackage: "win-x64",
     archiveExtension: ".zip",
     runtimePath: ["node.exe"],
+    rbxcloudPackage: `rbxcloud-${RBXCLOUD_VERSION}-win64.zip`,
+    rbxcloudBinary: "rbxcloud.exe",
     launcherName: "Launch Roblox Place Publisher.cmd",
     launcher: windowsLauncher
   },
@@ -22,6 +25,8 @@ const TARGETS = {
     nodePackage: "linux-x64",
     archiveExtension: ".tar.xz",
     runtimePath: ["bin", "node"],
+    rbxcloudPackage: `rbxcloud-${RBXCLOUD_VERSION}-linux.zip`,
+    rbxcloudBinary: "rbxcloud",
     launcherName: "launch-roblox-place-publisher.sh",
     launcher: unixLauncher
   },
@@ -29,6 +34,8 @@ const TARGETS = {
     nodePackage: "darwin-x64",
     archiveExtension: ".tar.gz",
     runtimePath: ["bin", "node"],
+    rbxcloudPackage: `rbxcloud-${RBXCLOUD_VERSION}-macos.zip`,
+    rbxcloudBinary: "rbxcloud",
     launcherName: "Launch Roblox Place Publisher.command",
     launcher: unixLauncher
   },
@@ -36,6 +43,8 @@ const TARGETS = {
     nodePackage: "darwin-arm64",
     archiveExtension: ".tar.gz",
     runtimePath: ["bin", "node"],
+    rbxcloudPackage: `rbxcloud-${RBXCLOUD_VERSION}-macos-aarch64.zip`,
+    rbxcloudBinary: "rbxcloud",
     launcherName: "Launch Roblox Place Publisher.command",
     launcher: unixLauncher
   }
@@ -264,11 +273,59 @@ async function copyRuntime(nodeRoot, packageDir, targetConfig) {
   }
 }
 
+async function findExtractedRbxcloud(extractDir, binaryName) {
+  const entries = await fs.readdir(extractDir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const entryPath = path.join(extractDir, entry.name);
+
+    if (entry.isFile() && entry.name === binaryName) {
+      return entryPath;
+    }
+
+    if (entry.isDirectory()) {
+      const nested = await findExtractedRbxcloud(entryPath, binaryName);
+
+      if (nested) {
+        return nested;
+      }
+    }
+  }
+
+  return "";
+}
+
+async function copyRbxcloud(packageDir, targetConfig) {
+  const archiveName = targetConfig.rbxcloudPackage;
+  const archiveUrl = `https://github.com/Sleitnick/rbxcloud/releases/download/v${RBXCLOUD_VERSION}/${archiveName}`;
+  const archivePath = path.join(CACHE_DIR, archiveName);
+  const extractDir = path.join(CACHE_DIR, `${archiveName}-extract`);
+  const toolsDir = path.join(packageDir, "tools");
+  const targetBinary = path.join(toolsDir, targetConfig.rbxcloudBinary);
+
+  await downloadFile(archiveUrl, archivePath);
+  await extractArchive(archivePath, extractDir);
+
+  const sourceBinary = await findExtractedRbxcloud(extractDir, targetConfig.rbxcloudBinary);
+
+  if (!sourceBinary) {
+    throw new Error(`Unable to find ${targetConfig.rbxcloudBinary} in ${archiveName}`);
+  }
+
+  await fs.mkdir(toolsDir, { recursive: true });
+  await fs.copyFile(sourceBinary, targetBinary);
+
+  if (!targetConfig.rbxcloudBinary.endsWith(".exe")) {
+    await fs.chmod(targetBinary, 0o755);
+  }
+}
+
 async function writePortableReadme(packageDir, target, nodeVersion) {
   const text = `Roblox Place Publisher portable build
 
 Target: ${target}
 Bundled Node.js: ${nodeVersion}
+Bundled rbxcloud: ${RBXCLOUD_VERSION}
 
 Run the launcher in this folder. It starts a local server and opens:
 
@@ -277,6 +334,7 @@ http://127.0.0.1:4173
 Close the terminal window to stop the app.
 
 No Node.js or npm install is required on this machine.
+No separate rbxcloud install is required for this portable build.
 `;
 
   await fs.writeFile(path.join(packageDir, "README-PORTABLE.txt"), text);
@@ -334,6 +392,7 @@ async function buildTarget(target, nodeVersion) {
 
   await copyAppFiles(path.join(packageDir, "app"));
   await copyRuntime(nodeRoot, packageDir, targetConfig);
+  await copyRbxcloud(packageDir, targetConfig);
   await writeLauncher(packageDir, targetConfig);
   await writePortableReadme(packageDir, target, nodeVersion);
   await archivePackage(packageDir, outputZip);

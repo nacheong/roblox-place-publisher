@@ -1,17 +1,16 @@
 # Roblox Place Publisher
 
-A local web interface for quickly publishing Roblox places through Roblox Open Cloud.
+A local web interface for quickly publishing a `.rbxl` file with `rbxcloud experience publish`.
 
-The app runs on your machine, can find places associated with a Universe ID, and publishes the latest saved place versions created by Studio package updates.
+The app can load places associated with a Universe ID, remembers selected places in the browser, and loops the same rbxcloud publish command over each selected Place ID.
+
+Important: when multiple places are selected, the same `.rbxl` file is published to every selected Place ID.
 
 ## Requirements
 
-- Roblox Open Cloud API key with:
-  - `universe-places:write`
-  - `asset:read`
-  - `legacy-asset:manage`
+- Roblox Open Cloud API key with `universe-places:write`
 - Universe ID for the Roblox experience
-- Optional: a `.rbxl` or `.rbxlx` place file if you use **Local file** mode
+- One `.rbxl` place file from Roblox Studio
 
 ## Launch
 
@@ -23,7 +22,7 @@ Download the portable build for your operating system from GitHub Releases, unzi
 - macOS: `Launch Roblox Place Publisher.command`
 - Linux: `launch-roblox-place-publisher.sh`
 
-The portable builds include Node.js, so developers do not need to install Node.js or npm.
+Portable builds include Node.js and `rbxcloud`, so other developers do not need to install npm or the rbxcloud CLI.
 
 The launcher opens:
 
@@ -34,6 +33,7 @@ http://127.0.0.1:4173
 ### From Source
 
 Source launches require Node.js 18 or newer.
+They also require `rbxcloud` on `PATH`, or `RBXCLOUD_PATH` pointing to the `rbxcloud` executable.
 
 ```bash
 npm start
@@ -58,12 +58,24 @@ npm start
 2. Enter the experience's Universe ID.
 3. Click the search icon beside **Universe ID** to load associated places.
 4. Select one or more places with the checkboxes, or enter a manual Place ID.
-5. Leave **Publish source** on **Latest saved version** for package rollouts.
-6. Choose `Published` or `Saved`.
-7. Review the generated request preview.
+5. Choose `Published` or `Saved`.
+6. Select a `.rbxl` file.
+7. Review the generated rbxcloud command preview.
 8. Click **Publish**.
 
-For package rollouts, update packages in Studio first. Studio package mass updates save the selected places without publishing them. This app then finds the newest saved, unpublished version for each selected place and publishes it.
+The generated command follows the rbxcloud docs:
+
+```text
+rbxcloud experience publish --filename <FILENAME> --place-id <PLACE_ID> --universe-id <UNIVERSE_ID> --version-type <VERSION_TYPE> --api-key <API_KEY>
+```
+
+The local server receives the uploaded `.rbxl`, writes it to a temporary `.rbxl` filename, then runs:
+
+```text
+rbxcloud experience publish --filename <temp-file> --place-id <placeId> --universe-id <universeId> --version-type <published|saved>
+```
+
+The API key is supplied to rbxcloud through `RBXCLOUD_API_KEY`, which rbxcloud supports, so the app does not need to print the real key in the command output.
 
 ## Token Storage
 
@@ -71,44 +83,15 @@ Use **Remember token** to store the API key locally in this browser's `localStor
 
 This is convenient for a local workflow, but it is not encrypted. Avoid using it on shared machines.
 
-Use **Reset** to clear remembered IDs, remembered token, selected file state, and response output.
-
-## API Behavior
-
-For **Latest saved version**, the local server:
-
-1. Lists the selected place's asset versions through the Open Cloud Assets API.
-2. Finds the newest version where `published` is `false`.
-3. Downloads that exact version through Asset Delivery.
-4. Uploads those bytes to the Place Publishing API.
-
-For **Local file**, the local server forwards the selected file to:
-
-```text
-https://apis.roblox.com/universes/v1/{universeId}/places/{placeId}/versions?versionType=Published
-```
-
-For **Published asset copy**, the local server:
-
-1. Downloads the selected place asset through Roblox Asset Delivery.
-2. Uploads those bytes to the Place Publishing API.
-
-Published asset copy is an advanced fallback and may not include saved-but-unpublished Studio/package changes. Use **Latest saved version** when you need to publish the result of Studio's package **Update All** workflow.
-
-Content types:
-
-- `.rbxl` uses `application/octet-stream`
-- `.rbxlx` uses `application/xml`
-
-Place discovery uses Roblox's universe places endpoint and paginates results so checkbox selection can include every associated place returned by Roblox.
+Use **Reset** to clear remembered IDs, remembered token, selected places, selected file state, and response output.
 
 ## Project Structure
 
 ```text
-server.js           Local HTTP server and Roblox API proxy
+server.js           Local HTTP server, place lookup, and rbxcloud runner
 public/index.html   App markup
 public/styles.css   App styles
-public/app.js       Client-side validation, place lookup, storage, and publish flow
+public/app.js       Client-side validation, storage, and publish flow
 scripts/            Portable package builder
 .github/workflows/  GitHub Actions portable release builds
 package.json        npm launch script
@@ -122,20 +105,19 @@ Maintainers can create portable zips locally:
 npm run package:portable
 ```
 
-GitHub Actions also builds portable packages for Windows, Linux, and macOS on pushes to `main`. Version tags like `v1.0.1` attach the zips to a GitHub Release.
+GitHub Actions also builds portable packages for Windows, Linux, and macOS on pushes to `main`. Version tags attach the zips to a GitHub Release.
 
 ## Troubleshooting
 
 - `401`: Check that your API key is valid.
-- `403`: Confirm the key has `universe-places:write`, `asset:read`, and `legacy-asset:manage`.
-- `409`: No saved/unpublished version was found for that place. Run Studio package Update All or save the place first.
+- `403`: Confirm the key has `universe-places:write`, creator ownership, and universe permissions.
 - `404`: Verify the Universe ID and Place ID.
-- Place not part of universe: verify the selected Universe ID and Place IDs.
+- `429`: Roblox is rate limiting publish requests. Wait, then retry a smaller batch.
 - Empty place list: verify the Universe ID, then use manual Place ID as a fallback.
+- Package updates not appearing live: export or save a `.rbxl` that already contains the package updates, then publish that file. This app now publishes the exact file you select.
 
 ## Roblox Docs
 
+- https://sleitnick.github.io/rbxcloud/cli/cli-experience/
 - https://create.roblox.com/docs/cloud/guides/usage-place-publishing
-- https://create.roblox.com/docs/cloud/reference/features/assets
 - https://create.roblox.com/docs/cloud/reference/features/places
-- https://create.roblox.com/docs/projects/assets/packages

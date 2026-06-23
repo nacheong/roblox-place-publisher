@@ -10,8 +10,6 @@ const els = {
   placesHint: document.querySelector("#placesHint"),
   placesList: document.querySelector("#placesList"),
   selectAllPlaces: document.querySelector("#selectAllPlaces"),
-  contentType: document.querySelector("#contentType"),
-  sourceHint: document.querySelector("#sourceHint"),
   fileInput: document.querySelector("#placeFile"),
   fileZone: document.querySelector("#fileZone"),
   fileTitle: document.querySelector("#fileTitle"),
@@ -24,11 +22,12 @@ const els = {
   resetForm: document.querySelector("#resetForm"),
   statusPill: document.querySelector("#statusPill"),
   endpointText: document.querySelector("#endpointText"),
-  contentTypeText: document.querySelector("#contentTypeText"),
+  fileText: document.querySelector("#fileText"),
   sourceText: document.querySelector("#sourceText"),
   targetText: document.querySelector("#targetText"),
   curlPreview: document.querySelector("#curlPreview"),
   responseEmpty: document.querySelector("#responseEmpty"),
+  responseBrief: document.querySelector("#responseBrief"),
   responseOutput: document.querySelector("#responseOutput"),
   dashboardLink: document.querySelector("#dashboardLink")
 };
@@ -39,39 +38,23 @@ let isFetchingPlaces = false;
 let discoveredPlaces = [];
 let selectedPlaceIds = new Set();
 let lastFetchedUniverseId = "";
+let savedPlaceSelections = {};
+let savedPlacesByUniverse = {};
 
 function getVersionType() {
-  return document.querySelector("input[name='versionType']:checked")?.value || "Published";
+  return document.querySelector("input[name='versionType']:checked")?.value || "published";
 }
 
-function getPublishSource() {
-  return document.querySelector("input[name='publishSource']:checked")?.value || "saved";
+function getVersionAction() {
+  return getVersionType() === "saved" ? "saved" : "published";
 }
 
-function inferContentType(file) {
+function isRbxlFile(file) {
   if (!file) {
-    return "";
+    return false;
   }
 
-  const name = file.name.toLowerCase();
-
-  if (name.endsWith(".rbxlx")) {
-    return "application/xml";
-  }
-
-  if (name.endsWith(".rbxl")) {
-    return "application/octet-stream";
-  }
-
-  return "";
-}
-
-function getEffectiveContentType() {
-  if (getPublishSource() !== "file") {
-    return "application/octet-stream";
-  }
-
-  return els.contentType.value === "auto" ? inferContentType(selectedFile) : els.contentType.value;
+  return file.name.toLowerCase().endsWith(".rbxl");
 }
 
 function formatBytes(bytes) {
@@ -89,6 +72,48 @@ function formatBytes(bytes) {
   }
 
   return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function asPlainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function getCachedSelection(universeId) {
+  return Array.isArray(savedPlaceSelections[universeId])
+    ? savedPlaceSelections[universeId].map(String)
+    : [];
+}
+
+function rememberCurrentPlaces() {
+  const universeId = els.universeId.value.trim();
+
+  if (!/^\d+$/.test(universeId) || discoveredPlaces.length === 0) {
+    return;
+  }
+
+  savedPlacesByUniverse[universeId] = discoveredPlaces;
+  savedPlaceSelections[universeId] = Array.from(selectedPlaceIds);
+}
+
+function restoreCachedPlaces(universeId) {
+  if (!/^\d+$/.test(universeId)) {
+    return false;
+  }
+
+  const cachedPlaces = Array.isArray(savedPlacesByUniverse[universeId])
+    ? savedPlacesByUniverse[universeId]
+    : [];
+
+  if (cachedPlaces.length === 0) {
+    return false;
+  }
+
+  discoveredPlaces = cachedPlaces;
+  const availableIds = new Set(discoveredPlaces.map((place) => String(place.id)));
+  selectedPlaceIds = new Set(getCachedSelection(universeId).filter((placeId) => availableIds.has(placeId)));
+  lastFetchedUniverseId = universeId;
+  renderPlaces();
+  return true;
 }
 
 function getPublishTargets() {
@@ -123,8 +148,7 @@ function buildEndpoint(placeId = getPreviewPlaceId()) {
     return "";
   }
 
-  const versionType = encodeURIComponent(getVersionType());
-  return `https://apis.roblox.com/universes/v1/${universeId}/places/${placeId}/versions?versionType=${versionType}`;
+  return `rbxcloud experience publish --universe-id ${universeId} --place-id ${placeId}`;
 }
 
 function buildLocalPublishUrl(placeId) {
@@ -132,93 +156,58 @@ function buildLocalPublishUrl(placeId) {
     universeId: els.universeId.value.trim(),
     placeId,
     versionType: getVersionType(),
-    contentType: getEffectiveContentType()
+    filename: selectedFile?.name || "place.rbxl"
   });
 
   return `/api/publish?${params.toString()}`;
 }
 
-function buildCurrentPublishUrl(placeId) {
-  const params = new URLSearchParams({
-    universeId: els.universeId.value.trim(),
-    placeId,
-    versionType: getVersionType()
-  });
-
-  return `/api/publish-current?${params.toString()}`;
-}
-
-function buildSavedPublishUrl(placeId) {
-  const params = new URLSearchParams({
-    universeId: els.universeId.value.trim(),
-    placeId,
-    versionType: getVersionType()
-  });
-
-  return `/api/publish-latest-saved?${params.toString()}`;
-}
-
 function buildCurl() {
   const targets = getPublishTargets();
   const previewPlaceId = getPreviewPlaceId();
-  const endpoint = buildEndpoint(previewPlaceId) || "https://apis.roblox.com/universes/v1/{universeId}/places/{placeId}/versions?versionType=Published";
-  const contentType = getEffectiveContentType() || "application/octet-stream";
   const fileName = selectedFile?.name || "place.rbxl";
+  const universeId = els.universeId.value.trim() || "{universeId}";
+  const placeId = previewPlaceId || "{placeId}";
+  const versionType = getVersionType();
   const prefix = targets.length > 1 ? `# Repeat for selected Place IDs: ${targets.join(", ")}\n` : "";
 
-  if (getPublishSource() === "saved") {
-    const universeId = els.universeId.value.trim() || "{universeId}";
-    const placeId = previewPlaceId || "{placeId}";
-    const versionType = encodeURIComponent(getVersionType());
-
-    return `${prefix}${[
-      "# App workflow: list place versions, download the newest saved/unpublished version, then publish those bytes.",
-      `curl --location --request POST "http://127.0.0.1:4173/api/publish-latest-saved?universeId=${universeId}&placeId=${placeId}&versionType=${versionType}" \\`,
-      `  --header "x-api-key: $ROBLOX_API_KEY"`
-    ].join("\n")}`;
-  }
-
-  if (getPublishSource() === "current") {
-    const universeId = els.universeId.value.trim() || "{universeId}";
-    const placeId = previewPlaceId || "{placeId}";
-    const versionType = encodeURIComponent(getVersionType());
-
-    return `${prefix}${[
-      "# Advanced workflow: download the latest Asset Delivery copy, then publish those bytes.",
-      "# This may not include saved-but-unpublished Studio/package updates.",
-      `curl --location --request POST "http://127.0.0.1:4173/api/publish-current?universeId=${universeId}&placeId=${placeId}&versionType=${versionType}" \\`,
-      `  --header "x-api-key: $ROBLOX_API_KEY"`
-    ].join("\n")}`;
-  }
-
   return `${prefix}${[
-    `curl --location --request POST "${endpoint}" \\`,
-    `  --header "x-api-key: $ROBLOX_API_KEY" \\`,
-    `  --header "Content-Type: ${contentType}" \\`,
-    `  --data-binary "@${fileName}"`
+    "rbxcloud experience publish \\",
+    `  --filename "${fileName}" \\`,
+    `  --place-id ${placeId} \\`,
+    `  --universe-id ${universeId} \\`,
+    `  --version-type ${versionType} \\`,
+    `  --api-key "$ROBLOX_API_KEY"`
   ].join("\n")}`;
 }
 
 function saveSettings() {
   const rememberIds = els.rememberIds.checked;
   const rememberToken = els.rememberToken.checked;
+  const currentUniverseId = els.universeId.value.trim();
+  rememberCurrentPlaces();
+  const hasSavedPlaces = Object.keys(savedPlacesByUniverse).length > 0 || Object.keys(savedPlaceSelections).length > 0;
 
-  if (!rememberIds && !rememberToken) {
+  if (!rememberIds && !rememberToken && !hasSavedPlaces) {
     localStorage.removeItem(STORAGE_KEY);
     return;
   }
 
   const settings = {
-    sourceModeVersion: 3,
+    settingsVersion: 5,
     versionType: getVersionType(),
-    publishSource: getPublishSource(),
-    contentType: els.contentType.value,
     rememberIds,
-    rememberToken
+    rememberToken,
+    placeSelectionsByUniverse: savedPlaceSelections,
+    placesByUniverse: savedPlacesByUniverse
   };
 
+  if (/^\d+$/.test(currentUniverseId)) {
+    settings.lastUniverseId = currentUniverseId;
+  }
+
   if (rememberIds) {
-    settings.universeId = els.universeId.value.trim();
+    settings.universeId = currentUniverseId;
     settings.placeId = els.placeId.value.trim();
   }
 
@@ -238,9 +227,10 @@ function loadSettings() {
 
   try {
     const settings = JSON.parse(raw);
-    els.universeId.value = settings.universeId || "";
-    els.placeId.value = settings.placeId || "";
-    els.contentType.value = settings.contentType || "auto";
+    savedPlaceSelections = asPlainObject(settings.placeSelectionsByUniverse);
+    savedPlacesByUniverse = asPlainObject(settings.placesByUniverse);
+    els.universeId.value = settings.universeId || settings.lastUniverseId || "";
+    els.placeId.value = settings.rememberIds ? settings.placeId || "" : "";
     els.rememberIds.checked = Boolean(settings.rememberIds);
     els.rememberToken.checked = Boolean(settings.rememberToken);
 
@@ -248,15 +238,9 @@ function loadSettings() {
       els.apiKey.value = settings.apiKey || "";
     }
 
-    const versionInput = document.querySelector(`input[name='versionType'][value='${settings.versionType || "Published"}']`);
+    const versionInput = document.querySelector(`input[name='versionType'][value='${settings.versionType || "published"}']`);
     if (versionInput) {
       versionInput.checked = true;
-    }
-
-    const publishSource = settings.sourceModeVersion === 3 ? settings.publishSource || "saved" : "saved";
-    const sourceInput = document.querySelector(`input[name='publishSource'][value='${publishSource}']`);
-    if (sourceInput) {
-      sourceInput.checked = true;
     }
   } catch {
     localStorage.removeItem(STORAGE_KEY);
@@ -268,8 +252,238 @@ function setStatus(text, tone = "neutral") {
   els.statusPill.className = `status-pill ${tone}`;
 }
 
+function getPlaceLabel(placeId) {
+  const place = discoveredPlaces.find((candidate) => candidate.id === String(placeId));
+  return place ? place.name : `Place ${placeId}`;
+}
+
+function detailText(value) {
+  if (!value) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(detailText).filter(Boolean).join(" ");
+  }
+
+  if (typeof value === "object") {
+    return detailText(value.message)
+      || detailText(value.error)
+      || detailText(value.errors)
+      || detailText(value.details)
+      || detailText(value.statusText);
+  }
+
+  return String(value);
+}
+
+function extractPayloadMessage(payload) {
+  const parts = [
+    payload?.message,
+    payload?.statusText,
+    payload?.body?.message,
+    payload?.body?.error,
+    payload?.body?.errors,
+    payload?.body?.details
+  ].map(detailText).filter(Boolean);
+
+  return Array.from(new Set(parts)).join(" ");
+}
+
+function getResultStatus(result) {
+  return Number(result.status || result.response?.status || result.response?.body?.status || 0);
+}
+
+function interpretResult(result) {
+  if (result.ok) {
+    const publishedVersion = result.versionNumber ?? result.response?.body?.versionNumber;
+    const sourceVersion = result.response?.sourceVersionNumber;
+    const detail = publishedVersion
+      ? `Roblox accepted it as version ${publishedVersion}${sourceVersion ? ` from saved version ${sourceVersion}` : ""}.`
+      : "Roblox accepted the publish request.";
+
+    return {
+      title: "Published",
+      detail
+    };
+  }
+
+  const status = getResultStatus(result);
+  const message = [result.message, extractPayloadMessage(result.response || {})].filter(Boolean).join(" ");
+  const lowerMessage = message.toLowerCase();
+
+  if (status === 401) {
+    return {
+      title: "API key rejected",
+      detail: "Roblox did not accept the API key. Recheck the token text, expiration, and any IP restrictions."
+    };
+  }
+
+  if (status === 403 && lowerMessage.includes("asset:read")) {
+    return {
+      title: "Missing asset:read",
+      detail: "The key cannot list place versions. Add the asset:read scope, then retry."
+    };
+  }
+
+  if (status === 403 && lowerMessage.includes("legacy-asset")) {
+    return {
+      title: "Missing legacy-asset:manage",
+      detail: "The key cannot download the saved place bytes. Add legacy-asset:manage, then retry."
+    };
+  }
+
+  if (status === 403) {
+    return {
+      title: "Permission denied",
+      detail: "Roblox blocked access to this place or universe. Check key scopes, creator ownership, and universe permissions."
+    };
+  }
+
+  if (status === 409) {
+    return {
+      title: "Conflict",
+      detail: message || "Roblox reported a conflict while publishing this file."
+    };
+  }
+
+  if (status === 404) {
+    return {
+      title: "Not found",
+      detail: "Roblox could not find that place/universe combination for this key. Check IDs and access."
+    };
+  }
+
+  if (status === 429) {
+    return {
+      title: "Rate limited",
+      detail: "Roblox is throttling publish requests. Wait a minute, then retry a smaller batch."
+    };
+  }
+
+  if (status >= 500) {
+    return {
+      title: "Roblox service error",
+      detail: message || "The request reached Roblox, but the service did not complete it."
+    };
+  }
+
+  if (status === 400) {
+    return {
+      title: "Request rejected",
+      detail: message || "Roblox rejected the request format or one of the IDs."
+    };
+  }
+
+  return {
+    title: status ? `HTTP ${status}` : "Publish failed",
+    detail: message || "No detailed error was returned."
+  };
+}
+
+function findCommonFailure(results) {
+  const failures = results.filter((result) => !result.ok);
+  const counts = new Map();
+
+  for (const result of failures) {
+    const interpretation = interpretResult(result);
+    const key = interpretation.title;
+    const current = counts.get(key);
+
+    counts.set(key, {
+      ...interpretation,
+      count: (current?.count || 0) + 1,
+      details: Array.from(new Set([...(current?.details || []), interpretation.detail]))
+    });
+  }
+
+  return Array.from(counts.values()).sort((a, b) => b.count - a.count)[0] || null;
+}
+
+function formatFailureSummary(failure) {
+  const placeText = `${failure.count} place${failure.count === 1 ? "" : "s"}`;
+  const example = failure.details?.length > 1 ? ` Example: ${failure.detail}` : "";
+
+  return `${placeText}: ${failure.title}. ${failure.detail}${example}`;
+}
+
+function renderResponseBrief(payload, tone) {
+  els.responseBrief.replaceChildren();
+
+  if (!payload || typeof payload === "string") {
+    els.responseBrief.hidden = true;
+    return;
+  }
+
+  const results = Array.isArray(payload.results) ? payload.results : [];
+  const summary = document.createElement("div");
+  summary.className = `response-summary ${tone || "neutral"}`;
+
+  const heading = document.createElement("h3");
+  const copy = document.createElement("p");
+
+  if (results.length > 0) {
+    const succeeded = results.filter((result) => result.ok).length;
+    const failed = results.length - succeeded;
+    const commonFailure = findCommonFailure(results);
+    const versionAction = getVersionAction();
+
+    heading.textContent = `${succeeded} of ${results.length} places ${versionAction}`;
+    copy.textContent = failed === 0
+      ? "Every selected place returned a successful response."
+      : commonFailure
+        ? formatFailureSummary(commonFailure)
+        : "One or more places failed. Check the per-place grid below.";
+
+    summary.append(heading, copy);
+
+    const grid = document.createElement("div");
+    grid.className = "publish-result-grid";
+
+    for (const result of results) {
+      const interpretation = interpretResult(result);
+      const item = document.createElement("div");
+      item.className = `publish-result ${result.ok ? "success" : "error"}`;
+
+      const title = document.createElement("strong");
+      title.textContent = getPlaceLabel(result.placeId);
+
+      const meta = document.createElement("span");
+      meta.textContent = result.ok ? interpretation.detail : `${interpretation.title}: ${interpretation.detail}`;
+
+      const id = document.createElement("code");
+      id.textContent = String(result.placeId);
+
+      item.append(title, meta, id);
+      grid.append(item);
+    }
+
+    els.responseBrief.append(summary, grid);
+    els.responseBrief.hidden = false;
+    return;
+  }
+
+  const interpretation = interpretResult({
+    ok: Boolean(payload.ok),
+    status: payload.status,
+    response: payload,
+    message: payload.message
+  });
+
+  heading.textContent = payload.ok ? "Request accepted" : interpretation.title;
+  copy.textContent = payload.ok ? "Roblox returned a successful response." : interpretation.detail;
+  summary.append(heading, copy);
+  els.responseBrief.append(summary);
+  els.responseBrief.hidden = false;
+}
+
 function setResponse(payload, tone) {
   els.responseEmpty.hidden = true;
+  renderResponseBrief(payload, tone);
   els.responseOutput.hidden = false;
   els.responseOutput.textContent = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
 
@@ -279,33 +493,6 @@ function setResponse(payload, tone) {
     els.responseOutput.style.borderColor = "#f3b8b2";
   } else {
     els.responseOutput.style.borderColor = "";
-  }
-}
-
-function updatePublishSourceUi() {
-  const source = getPublishSource();
-  const isFileSource = source === "file";
-  const contentTypeField = els.contentType.closest(".field");
-
-  els.fileZone.classList.toggle("hidden", !isFileSource);
-  els.contentType.disabled = !isFileSource;
-  contentTypeField?.classList.toggle("is-disabled", !isFileSource);
-
-  if (source === "saved") {
-    els.fileMeta.textContent = "Using the newest saved/unpublished place version.";
-    if (els.sourceHint) {
-      els.sourceHint.textContent = "Recommended for package rollouts: publish the newest saved version created by Studio package updates.";
-    }
-  } else if (source === "current") {
-    els.fileMeta.textContent = "Using Asset Delivery copy; saved Studio/package changes may not be included.";
-    if (els.sourceHint) {
-      els.sourceHint.textContent = "Advanced fallback: re-publishes the latest delivered asset copy, usually the already-published version.";
-    }
-  } else if (!selectedFile) {
-    els.fileMeta.textContent = ".rbxl or .rbxlx from Studio";
-    if (els.sourceHint) {
-      els.sourceHint.textContent = "Fallback: upload an explicit .rbxl or .rbxlx file from disk.";
-    }
   }
 }
 
@@ -336,14 +523,26 @@ function renderPlaces(emptyMessage = "No places loaded.") {
   els.selectAllPlaces.checked = selectedPlaceIds.size === discoveredPlaces.length;
   els.placesHint.textContent = `${discoveredPlaces.length} place${discoveredPlaces.length === 1 ? "" : "s"} found. ${selectedPlaceIds.size} selected.`;
 
-  for (const place of discoveredPlaces) {
+  const orderedPlaces = [...discoveredPlaces].sort((a, b) => {
+    const aSelected = selectedPlaceIds.has(a.id);
+    const bSelected = selectedPlaceIds.has(b.id);
+
+    if (aSelected !== bSelected) {
+      return aSelected ? -1 : 1;
+    }
+
+    return 0;
+  });
+
+  for (const place of orderedPlaces) {
+    const isSelected = selectedPlaceIds.has(place.id);
     const option = document.createElement("label");
-    option.className = "place-option";
+    option.className = `place-option${isSelected ? " selected" : ""}`;
 
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.value = place.id;
-    checkbox.checked = selectedPlaceIds.has(place.id);
+    checkbox.checked = isSelected;
     checkbox.addEventListener("change", () => {
       if (checkbox.checked) {
         selectedPlaceIds.add(place.id);
@@ -362,7 +561,7 @@ function renderPlaces(emptyMessage = "No places loaded.") {
 
     const id = document.createElement("div");
     id.className = "place-id";
-    id.textContent = `Place ID ${place.id}`;
+    id.textContent = place.id;
 
     copy.append(name, id);
     option.append(checkbox, copy);
@@ -416,7 +615,8 @@ async function fetchPlaces() {
     }
 
     discoveredPlaces = payload.places || [];
-    selectedPlaceIds = new Set();
+    const availableIds = new Set(discoveredPlaces.map((place) => String(place.id)));
+    selectedPlaceIds = new Set(getCachedSelection(universeId).filter((placeId) => availableIds.has(placeId)));
     lastFetchedUniverseId = universeId;
     renderPlaces(discoveredPlaces.length === 0 ? "No places found for this universe." : undefined);
     setStatus(`${discoveredPlaces.length} found`, discoveredPlaces.length > 0 ? "success" : "warning");
@@ -438,9 +638,7 @@ function validate(showErrors = false) {
   const errors = [];
   const universeId = els.universeId.value.trim();
   const manualPlaceId = els.placeId.value.trim();
-  const contentType = getEffectiveContentType();
   const targets = getPublishTargets();
-  const isFileSource = getPublishSource() === "file";
 
   if (!els.apiKey.value.trim()) {
     errors.push("Enter an API key.");
@@ -458,12 +656,12 @@ function validate(showErrors = false) {
     errors.push("Select at least one associated place or enter a manual Place ID.");
   }
 
-  if (isFileSource && !selectedFile) {
-    errors.push("Select a .rbxl or .rbxlx file.");
+  if (!selectedFile) {
+    errors.push("Select a .rbxl file.");
   }
 
-  if (isFileSource && selectedFile && !contentType) {
-    errors.push("Choose a content type for this file.");
+  if (selectedFile && !isRbxlFile(selectedFile)) {
+    errors.push("The selected file must end in .rbxl.");
   }
 
   els.publishButton.disabled = errors.length > 0 || isPublishing || isFetchingPlaces;
@@ -478,13 +676,11 @@ function validate(showErrors = false) {
 
 function updatePreview() {
   const endpoint = buildEndpoint();
-  const contentType = getEffectiveContentType();
   const targets = getPublishTargets();
-  const source = getPublishSource();
 
-  els.endpointText.textContent = endpoint.includes("{selectedPlaceId}") ? "Multiple selected place endpoints" : endpoint || "Waiting for IDs";
-  els.contentTypeText.textContent = source !== "file" ? "application/octet-stream" : contentType || "Waiting for file";
-  els.sourceText.textContent = source === "saved" ? "Latest saved version" : source === "current" ? "Published asset copy" : "Local file upload";
+  els.endpointText.textContent = endpoint.includes("{selectedPlaceId}") ? "rbxcloud publish for selected places" : endpoint || "Waiting for IDs";
+  els.fileText.textContent = selectedFile ? selectedFile.name : "Waiting for .rbxl";
+  els.sourceText.textContent = targets.length > 1 ? "Same .rbxl to each target" : "Local .rbxl file";
   els.targetText.textContent = describeTargets(targets);
   els.curlPreview.textContent = buildCurl();
 
@@ -513,27 +709,23 @@ function updateFile(file) {
 
   if (!selectedFile) {
     els.fileTitle.textContent = "Choose a place file";
-    els.fileMeta.textContent = getPublishSource() === "saved"
-      ? "Using the newest saved/unpublished place version."
-      : getPublishSource() === "current"
-        ? "Using Asset Delivery copy; saved Studio/package changes may not be included."
-        : ".rbxl or .rbxlx from Studio";
+    els.fileMeta.textContent = ".rbxl from Studio";
     validate(false);
     return;
   }
 
-  const inferredType = inferContentType(selectedFile);
   els.fileTitle.textContent = selectedFile.name;
-  els.fileMeta.textContent = `${formatBytes(selectedFile.size)}${inferredType ? ` - ${inferredType}` : ""}`;
+  els.fileMeta.textContent = isRbxlFile(selectedFile)
+    ? formatBytes(selectedFile.size)
+    : `${formatBytes(selectedFile.size)} - not an .rbxl file`;
   validate(false);
 }
 
 async function publishPlace() {
   const errors = validate(true);
   const targets = getPublishTargets();
-  const source = getPublishSource();
 
-  if (errors.length > 0 || (source === "file" && !selectedFile) || targets.length === 0) {
+  if (errors.length > 0 || !selectedFile || targets.length === 0) {
     setStatus("Check fields", "warning");
     return;
   }
@@ -541,7 +733,7 @@ async function publishPlace() {
   isPublishing = true;
   els.publishButton.disabled = true;
   setStatus("Publishing", "warning");
-  setResponse(`${source === "saved" ? "Publishing latest saved version" : source === "current" ? "Publishing published asset copy" : "Uploading local file"} to ${targets.length} place${targets.length === 1 ? "" : "s"}...`, "neutral");
+  setResponse(`Publishing ${selectedFile.name} to ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`, "neutral");
 
   const results = [];
 
@@ -557,16 +749,10 @@ async function publishPlace() {
         headers
       };
 
-      if (source === "file") {
-        headers["content-type"] = getEffectiveContentType();
-        request.body = selectedFile;
-      }
+      headers["content-type"] = "application/octet-stream";
+      request.body = selectedFile;
 
-      const url = source === "saved"
-        ? buildSavedPublishUrl(placeId)
-        : source === "current"
-          ? buildCurrentPublishUrl(placeId)
-          : buildLocalPublishUrl(placeId);
+      const url = buildLocalPublishUrl(placeId);
       const response = await fetch(url, request);
 
       const payload = await response.json();
@@ -574,7 +760,7 @@ async function publishPlace() {
 
       results.push({
         placeId,
-        source,
+        source: "rbxcloud-file",
         ok: response.ok && payload.ok,
         status: payload.status || response.status,
         versionNumber,
@@ -583,7 +769,7 @@ async function publishPlace() {
     } catch (error) {
       results.push({
         placeId,
-        source,
+        source: "rbxcloud-file",
         ok: false,
         message: error instanceof Error ? error.message : "Publish failed."
       });
@@ -593,11 +779,12 @@ async function publishPlace() {
   const succeeded = results.filter((result) => result.ok).length;
   const allOk = succeeded === results.length;
 
-  setStatus(allOk ? `${succeeded} published` : `${succeeded}/${results.length} ok`, allOk ? "success" : "error");
+  setStatus(allOk ? `${succeeded} ${getVersionAction()}` : `${succeeded}/${results.length} ok`, allOk ? "success" : "error");
   setResponse({
     ok: allOk,
     universeId: els.universeId.value.trim(),
-    source,
+    source: "rbxcloud-file",
+    file: selectedFile.name,
     versionType: getVersionType(),
     targets: results.length,
     succeeded,
@@ -611,8 +798,12 @@ async function publishPlace() {
 function resetForm() {
   els.form.reset();
   selectedFile = null;
+  savedPlaceSelections = {};
+  savedPlacesByUniverse = {};
   els.fileInput.value = "";
   els.responseOutput.hidden = true;
+  els.responseBrief.hidden = true;
+  els.responseBrief.replaceChildren();
   els.responseEmpty.hidden = false;
   els.responseOutput.textContent = "";
   els.responseOutput.style.borderColor = "";
@@ -620,7 +811,6 @@ function resetForm() {
   localStorage.removeItem(STORAGE_KEY);
   clearPlaces();
   updateFile(null);
-  updatePublishSourceUi();
 }
 
 function bindEvents() {
@@ -687,10 +877,14 @@ function bindEvents() {
 
   els.resetForm.addEventListener("click", resetForm);
 
-  [els.apiKey, els.universeId, els.placeId, els.contentType, els.rememberIds, els.rememberToken].forEach((element) => {
+  [els.apiKey, els.universeId, els.placeId, els.rememberIds, els.rememberToken].forEach((element) => {
     element.addEventListener("input", () => {
       if (element === els.universeId && lastFetchedUniverseId && els.universeId.value.trim() !== lastFetchedUniverseId) {
-        clearPlaces("Universe changed. Find places again.");
+        const universeId = els.universeId.value.trim();
+
+        if (!restoreCachedPlaces(universeId)) {
+          clearPlaces("Universe changed. Find places again.");
+        }
       }
 
       validate(false);
@@ -701,19 +895,13 @@ function bindEvents() {
   document.querySelectorAll("input[name='versionType']").forEach((element) => {
     element.addEventListener("change", () => validate(false));
   });
-
-  document.querySelectorAll("input[name='publishSource']").forEach((element) => {
-    element.addEventListener("change", () => {
-      updatePublishSourceUi();
-      validate(false);
-    });
-  });
 }
 
 loadSettings();
 bindEvents();
-updatePublishSourceUi();
-renderPlaces();
+if (!restoreCachedPlaces(els.universeId.value.trim())) {
+  renderPlaces();
+}
 updatePreview();
 validate(false);
 window.addEventListener("load", () => window.lucide?.createIcons());

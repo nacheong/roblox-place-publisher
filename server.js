@@ -1,5 +1,7 @@
 const fs = require("node:fs");
+const fsp = require("node:fs/promises");
 const http = require("node:http");
+const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { URL } = require("node:url");
@@ -7,6 +9,7 @@ const { URL } = require("node:url");
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 4173);
 const PUBLIC_DIR = path.resolve(__dirname, "public");
+const RBXCLOUD_BINARY = process.platform === "win32" ? "rbxcloud.exe" : "rbxcloud";
 
 const MIME_TYPES = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -40,6 +43,167 @@ function sendJson(res, status, payload) {
   res.end(body);
 }
 
+function isPathLike(command) {
+  return command.includes("/") || command.includes("\\") || path.isAbsolute(command);
+}
+
+function detailMessage(value) {
+  if (!value) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(detailMessage).filter(Boolean).join(" ");
+  }
+
+  if (typeof value === "object") {
+    return detailMessage(value.message)
+      || detailMessage(value.error)
+      || detailMessage(value.errors)
+      || detailMessage(value.details)
+      || detailMessage(value.statusText);
+  }
+
+  return String(value);
+}
+
+function resolveRbxcloudCommand() {
+  const candidates = [
+    process.env.RBXCLOUD_PATH,
+    path.join(__dirname, "..", "tools", RBXCLOUD_BINARY),
+    path.join(__dirname, "tools", RBXCLOUD_BINARY),
+    path.join(__dirname, ".portable-cache", "rbxcloud", RBXCLOUD_BINARY),
+    "rbxcloud"
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (!isPathLike(candidate) || fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "";
+}
+
+function parseRbxcloudError(text) {
+  const trimmed = String(text || "").trim();
+  const httpLineMatch = trimmed.match(/^http\s+(\d+):\s*([\s\S]*)$/i);
+
+  if (httpLineMatch) {
+    const rawMessage = httpLineMatch[2].trim();
+    const jsonMessage = parseMaybeJson(rawMessage);
+
+    return {
+      status: Number(httpLineMatch[1]),
+      message: detailMessage(jsonMessage) || rawMessage
+    };
+  }
+
+  const statusMatch = trimmed.match(/HttpStatusError\s*\{\s*code:\s*(\d+),\s*msg:\s*"((?:\\.|[^"])*)"/);
+
+  if (statusMatch) {
+    const rawMessage = statusMatch[2]
+      .replace(/\\"/g, "\"")
+      .replace(/\\n/g, "\n")
+      .replace(/\\\\/g, "\\");
+    const jsonMessage = parseMaybeJson(rawMessage);
+
+    return {
+      status: Number(statusMatch[1]),
+      message: detailMessage(jsonMessage) || rawMessage
+    };
+  }
+
+  return {
+    status: 502,
+    message: trimmed || "rbxcloud did not return an error message."
+  };
+}
+
+function streamToBuffer(stream) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+
+    stream.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    stream.on("error", reject);
+    stream.on("end", () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+function runRbxcloudPublish({ command, apiKey, universeId, placeId, versionType, filename }) {
+  const args = [
+    "experience",
+    "publish",
+    "--filename",
+    filename,
+    "--place-id",
+    placeId,
+    "--universe-id",
+    universeId,
+    "--version-type",
+    versionType.toLowerCase()
+  ];
+
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      env: {
+        ...process.env,
+        RBXCLOUD_API_KEY: apiKey
+      },
+      shell: false,
+      windowsHide: true
+    });
+    const stdout = [];
+    const stderr = [];
+
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+
+    child.on("error", (error) => {
+      resolve({
+        ok: false,
+        status: 502,
+        statusText: "rbxcloud failed",
+        body: null,
+        message: error instanceof Error ? error.message : "Unable to start rbxcloud."
+      });
+    });
+
+    child.on("exit", (code) => {
+      const stdoutText = Buffer.concat(stdout).toString("utf8").trim();
+      const stderrText = Buffer.concat(stderr).toString("utf8").trim();
+      const body = parseMaybeJson(stdoutText);
+
+      if (code === 0) {
+        resolve({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          body,
+          rbxcloudExitCode: code
+        });
+        return;
+      }
+
+      const parsedError = parseRbxcloudError(stderrText || stdoutText);
+
+      resolve({
+        ok: false,
+        status: parsedError.status,
+        statusText: "rbxcloud failed",
+        body: body || null,
+        rbxcloudExitCode: code,
+        message: parsedError.message,
+        stderr: stderrText
+      });
+    });
+  });
+}
+
 function parseMaybeJson(text) {
   if (!text) {
     return null;
@@ -52,12 +216,18 @@ function parseMaybeJson(text) {
   }
 }
 
+function getPlaceFileExtension(filename) {
+  const extension = path.extname(filename || "").toLowerCase();
+  return extension === ".rbxl" ? extension : "";
+}
+
 function validatePublishRequest(req, searchParams) {
   const apiKey = req.headers["x-api-key"];
   const universeId = (searchParams.get("universeId") || "").trim();
   const placeId = (searchParams.get("placeId") || "").trim();
-  const versionType = (searchParams.get("versionType") || "Published").trim();
-  const contentType = (searchParams.get("contentType") || req.headers["content-type"] || "").trim();
+  const versionType = (searchParams.get("versionType") || "published").trim().toLowerCase();
+  const originalFilename = (searchParams.get("filename") || "").trim();
+  const fileExtension = getPlaceFileExtension(originalFilename);
   const contentLength = req.headers["content-length"];
 
   const errors = [];
@@ -74,12 +244,12 @@ function validatePublishRequest(req, searchParams) {
     errors.push("Place ID must be a number.");
   }
 
-  if (!["Published", "Saved"].includes(versionType)) {
-    errors.push("Version type must be Published or Saved.");
+  if (!["published", "saved"].includes(versionType)) {
+    errors.push("Version type must be published or saved.");
   }
 
-  if (!["application/octet-stream", "application/xml"].includes(contentType)) {
-    errors.push("Content type must be application/octet-stream or application/xml.");
+  if (!fileExtension) {
+    errors.push("Filename must end in .rbxl.");
   }
 
   if (contentLength === "0") {
@@ -91,72 +261,10 @@ function validatePublishRequest(req, searchParams) {
     universeId,
     placeId,
     versionType,
-    contentType,
+    originalFilename,
+    fileExtension,
     errors
   };
-}
-
-function validateCurrentPublishRequest(req, searchParams) {
-  const apiKey = req.headers["x-api-key"];
-  const universeId = (searchParams.get("universeId") || "").trim();
-  const placeId = (searchParams.get("placeId") || "").trim();
-  const versionType = (searchParams.get("versionType") || "Published").trim();
-  const errors = [];
-
-  if (!apiKey || Array.isArray(apiKey)) {
-    errors.push("API key is required.");
-  }
-
-  if (!/^\d+$/.test(universeId)) {
-    errors.push("Universe ID must be a number.");
-  }
-
-  if (!/^\d+$/.test(placeId)) {
-    errors.push("Place ID must be a number.");
-  }
-
-  if (!["Published", "Saved"].includes(versionType)) {
-    errors.push("Version type must be Published or Saved.");
-  }
-
-  return {
-    apiKey,
-    universeId,
-    placeId,
-    versionType,
-    errors
-  };
-}
-
-function getVersionNumber(assetVersion) {
-  if (assetVersion?.versionNumber !== undefined) {
-    return Number(assetVersion.versionNumber);
-  }
-
-  if (assetVersion?.revisionId !== undefined) {
-    return Number(assetVersion.revisionId);
-  }
-
-  const pathMatch = typeof assetVersion?.path === "string" ? assetVersion.path.match(/\/versions\/(\d+)$/) : null;
-  return pathMatch ? Number(pathMatch[1]) : NaN;
-}
-
-function getAssetVersions(body) {
-  if (Array.isArray(body)) {
-    return body;
-  }
-
-  for (const key of ["assetVersions", "versions", "data"]) {
-    if (Array.isArray(body?.[key])) {
-      return body[key];
-    }
-  }
-
-  return [];
-}
-
-function getNextPageToken(body) {
-  return body?.nextPageToken || body?.nextPageCursor || "";
 }
 
 function normalizePlace(place) {
@@ -295,159 +403,68 @@ async function handlePlaces(req, res, requestUrl) {
   });
 }
 
-async function publishToRoblox({ apiKey, universeId, placeId, versionType, contentType, body }) {
-  const endpoint = `https://apis.roblox.com/universes/v1/${universeId}/places/${placeId}/versions?versionType=${encodeURIComponent(versionType)}`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "x-api-key": apiKey,
-      "content-type": contentType
-    },
-    body,
-    duplex: "half"
-  });
-  const text = await response.text();
+async function publishToRoblox({ apiKey, universeId, placeId, versionType, originalFilename, fileExtension, body }) {
+  const command = resolveRbxcloudCommand();
 
-  return {
-    ok: response.ok,
-    status: response.status,
-    statusText: response.statusText,
-    endpoint,
-    contentType,
-    versionType,
-    body: parseMaybeJson(text)
-  };
-}
+  if (!command) {
+    return {
+      ok: false,
+      status: 502,
+      statusText: "rbxcloud unavailable",
+      endpoint: "rbxcloud experience publish",
+      publisher: "rbxcloud",
+      versionType,
+      originalFilename,
+      body: null,
+      message: "rbxcloud was not found. Install it on PATH, set RBXCLOUD_PATH, or use a portable build that bundles it."
+    };
+  }
 
-async function fetchPlaceVersions(apiKey, placeId) {
-  const versions = [];
-  const attempts = [];
-  let pageToken = "";
-  let pages = 0;
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "roblox-place-publisher-"));
+  const filename = path.join(tempDir, `place-${placeId}${fileExtension || ".rbxl"}`);
 
-  do {
-    const url = new URL(`https://apis.roblox.com/assets/v1/assets/${placeId}/versions`);
-    url.searchParams.set("maxPageSize", "50");
+  try {
+    const buffer = Buffer.isBuffer(body) ? body : await streamToBuffer(body);
 
-    if (pageToken) {
-      url.searchParams.set("pageToken", pageToken);
-    }
-
-    const response = await fetch(url, {
-      headers: {
-        "accept": "application/json",
-        "x-api-key": apiKey
-      }
-    });
-    const text = await response.text();
-    const body = parseMaybeJson(text);
-
-    attempts.push({
-      endpoint: url.toString(),
-      status: response.status,
-      statusText: response.statusText
-    });
-
-    if (!response.ok) {
+    if (buffer.length === 0) {
       return {
         ok: false,
-        status: response.status,
-        statusText: response.statusText,
-        body,
-        attempts
+        status: 400,
+        statusText: "Empty file",
+        endpoint: "rbxcloud experience publish",
+        publisher: "rbxcloud",
+        command: "rbxcloud experience publish",
+        versionType,
+        originalFilename,
+        contentBytes: 0,
+        message: "A non-empty .rbxl file is required."
       };
     }
 
-    versions.push(...getAssetVersions(body));
-    pageToken = getNextPageToken(body);
-    pages += 1;
-  } while (pageToken && pages < 10);
+    await fsp.writeFile(filename, buffer);
 
-  return {
-    ok: true,
-    status: 200,
-    statusText: "OK",
-    versions,
-    attempts
-  };
-}
+    const result = await runRbxcloudPublish({
+      command,
+      apiKey,
+      universeId,
+      placeId,
+      versionType,
+      filename
+    });
 
-function findLatestSavedPlaceVersion(versions) {
-  const normalizedVersions = versions
-    .map((version) => ({
-      ...version,
-      versionNumber: getVersionNumber(version)
-    }))
-    .filter((version) => Number.isFinite(version.versionNumber));
-  const latestPublishedVersionNumber = normalizedVersions
-    .filter((version) => version.published === true)
-    .reduce((latest, version) => Math.max(latest, version.versionNumber), 0);
-  const savedVersion = normalizedVersions
-    .filter((version) => version.published === false && version.versionNumber > latestPublishedVersionNumber)
-    .sort((a, b) => b.versionNumber - a.versionNumber)[0] || null;
-
-  return {
-    savedVersion,
-    latestPublishedVersionNumber
-  };
-}
-
-async function downloadPlaceFileFromAssetDelivery(apiKey, placeId, versionNumber) {
-  const assetDeliveryEndpoint = versionNumber
-    ? `https://apis.roblox.com/asset-delivery-api/v1/assetId/${placeId}/version/${versionNumber}`
-    : `https://apis.roblox.com/asset-delivery-api/v1/assetId/${placeId}`;
-  const assetResponse = await fetch(assetDeliveryEndpoint, {
-    headers: {
-      "accept": "application/json",
-      "x-api-key": apiKey
-    }
-  });
-  const assetText = await assetResponse.text();
-  const assetBody = parseMaybeJson(assetText);
-
-  if (!assetResponse.ok || !assetBody?.location) {
     return {
-      ok: false,
-      status: assetResponse.status,
-      statusText: assetResponse.statusText,
-      assetDeliveryEndpoint,
-      body: assetBody
+      ...result,
+      endpoint: "rbxcloud experience publish",
+      publisher: "rbxcloud",
+      command: "rbxcloud experience publish",
+      versionType,
+      originalFilename,
+      rbxcloudFilename: filename,
+      contentBytes: buffer.length
     };
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true }).catch(() => {});
   }
-
-  const contentResponse = await fetch(assetBody.location, {
-    headers: {
-      "accept": "application/octet-stream"
-    }
-  });
-
-  if (!contentResponse.ok) {
-    const text = await contentResponse.text();
-    return {
-      ok: false,
-      status: contentResponse.status,
-      statusText: contentResponse.statusText,
-      assetDeliveryEndpoint,
-      body: parseMaybeJson(text)
-    };
-  }
-
-  const arrayBuffer = await contentResponse.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-
-  return {
-    ok: true,
-    status: 200,
-    statusText: "OK",
-    assetDeliveryEndpoint,
-    versionNumber: versionNumber || null,
-    contentBytes: buffer.length,
-    buffer
-  };
-}
-
-async function downloadCurrentPlaceFile(apiKey, placeId) {
-  return downloadPlaceFileFromAssetDelivery(apiKey, placeId);
 }
 
 async function handlePublish(req, res, requestUrl) {
@@ -468,7 +485,8 @@ async function handlePublish(req, res, requestUrl) {
       universeId: validation.universeId,
       placeId: validation.placeId,
       versionType: validation.versionType,
-      contentType: validation.contentType,
+      originalFilename: validation.originalFilename,
+      fileExtension: validation.fileExtension,
       body: req
     });
 
@@ -479,152 +497,6 @@ async function handlePublish(req, res, requestUrl) {
       status: 502,
       statusText: "Bad Gateway",
       message: error instanceof Error ? error.message : "Unable to reach Roblox Open Cloud."
-    });
-  }
-}
-
-async function handlePublishCurrent(req, res, requestUrl) {
-  const validation = validateCurrentPublishRequest(req, requestUrl.searchParams);
-
-  if (validation.errors.length > 0) {
-    req.resume();
-    sendJson(res, 400, {
-      ok: false,
-      errors: validation.errors
-    });
-    return;
-  }
-
-  req.resume();
-
-  try {
-    const currentFile = await downloadCurrentPlaceFile(validation.apiKey, validation.placeId);
-
-    if (!currentFile.ok) {
-      sendJson(res, currentFile.status || 502, {
-        ok: false,
-        status: currentFile.status || 502,
-        statusText: currentFile.statusText || "Asset delivery failed",
-        source: "assetDeliveryCopy",
-        assetDeliveryEndpoint: currentFile.assetDeliveryEndpoint,
-        body: currentFile.body,
-        message: "Unable to download the place asset from Asset Delivery. The API key may need legacy-asset:manage."
-      });
-      return;
-    }
-
-    const result = await publishToRoblox({
-      apiKey: validation.apiKey,
-      universeId: validation.universeId,
-      placeId: validation.placeId,
-      versionType: validation.versionType,
-      contentType: "application/octet-stream",
-      body: currentFile.buffer
-    });
-
-    sendJson(res, result.status, {
-      ...result,
-      source: "assetDeliveryCopy",
-      assetDeliveryEndpoint: currentFile.assetDeliveryEndpoint,
-      contentBytes: currentFile.contentBytes
-    });
-  } catch (error) {
-    sendJson(res, 502, {
-      ok: false,
-      status: 502,
-      statusText: "Bad Gateway",
-      source: "assetDeliveryCopy",
-      message: error instanceof Error ? error.message : "Unable to publish Asset Delivery copy."
-    });
-  }
-}
-
-async function handlePublishLatestSaved(req, res, requestUrl) {
-  const validation = validateCurrentPublishRequest(req, requestUrl.searchParams);
-
-  if (validation.errors.length > 0) {
-    req.resume();
-    sendJson(res, 400, {
-      ok: false,
-      errors: validation.errors
-    });
-    return;
-  }
-
-  req.resume();
-
-  try {
-    const versionList = await fetchPlaceVersions(validation.apiKey, validation.placeId);
-
-    if (!versionList.ok) {
-      sendJson(res, versionList.status || 502, {
-        ok: false,
-        status: versionList.status || 502,
-        statusText: versionList.statusText || "Asset versions failed",
-        source: "latestSavedVersion",
-        body: versionList.body,
-        attempts: versionList.attempts,
-        message: "Unable to list place versions. The API key may need asset:read."
-      });
-      return;
-    }
-
-    const { savedVersion, latestPublishedVersionNumber } = findLatestSavedPlaceVersion(versionList.versions);
-
-    if (!savedVersion) {
-      sendJson(res, 409, {
-        ok: false,
-        status: 409,
-        statusText: "No saved version found",
-        source: "latestSavedVersion",
-        checkedVersions: versionList.versions.length,
-        latestPublishedVersionNumber,
-        attempts: versionList.attempts,
-        message: "No unpublished saved place version newer than the latest published version was found. Run Studio Update All or Save first, then try again."
-      });
-      return;
-    }
-
-    const savedFile = await downloadPlaceFileFromAssetDelivery(validation.apiKey, validation.placeId, savedVersion.versionNumber);
-
-    if (!savedFile.ok) {
-      sendJson(res, savedFile.status || 502, {
-        ok: false,
-        status: savedFile.status || 502,
-        statusText: savedFile.statusText || "Asset delivery failed",
-        source: "latestSavedVersion",
-        sourceVersionNumber: savedVersion.versionNumber,
-        assetDeliveryEndpoint: savedFile.assetDeliveryEndpoint,
-        body: savedFile.body,
-        message: "Unable to download the latest saved place version. The API key may need legacy-asset:manage."
-      });
-      return;
-    }
-
-    const result = await publishToRoblox({
-      apiKey: validation.apiKey,
-      universeId: validation.universeId,
-      placeId: validation.placeId,
-      versionType: validation.versionType,
-      contentType: "application/octet-stream",
-      body: savedFile.buffer
-    });
-
-    sendJson(res, result.status, {
-      ...result,
-      source: "latestSavedVersion",
-      sourceVersionNumber: savedVersion.versionNumber,
-      sourceAssetVersion: savedVersion,
-      assetDeliveryEndpoint: savedFile.assetDeliveryEndpoint,
-      contentBytes: savedFile.contentBytes
-    });
-  } catch (error) {
-    sendJson(res, 502, {
-      ok: false,
-      status: 502,
-      statusText: "Bad Gateway",
-      source: "latestSavedVersion",
-      message: error instanceof Error ? error.message : "Unable to publish latest saved place version."
     });
   }
 }
@@ -673,16 +545,6 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "POST" && requestUrl.pathname === "/api/publish") {
     handlePublish(req, res, requestUrl);
-    return;
-  }
-
-  if (req.method === "POST" && requestUrl.pathname === "/api/publish-current") {
-    handlePublishCurrent(req, res, requestUrl);
-    return;
-  }
-
-  if (req.method === "POST" && requestUrl.pathname === "/api/publish-latest-saved") {
-    handlePublishLatestSaved(req, res, requestUrl);
     return;
   }
 
