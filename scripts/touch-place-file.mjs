@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { touchPlaceBuffer } from "../lib/place-touch.cjs";
+import placeTouch from "../lib/place-touch.cjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
+const { touchPlaceFile } = placeTouch;
 
 function parseArgs(argv) {
   const args = {
@@ -64,15 +65,16 @@ async function main() {
   requireValue(args.versionType, "--version-type");
 
   const file = path.resolve(ROOT, args.file);
-  const buffer = await fs.readFile(file);
-  const touched = touchPlaceBuffer(buffer, {
+  await fs.access(file);
+
+  const touched = await touchPlaceFile({
+    file,
     placeId: args.placeId,
     universeId: args.universeId,
     versionType: args.versionType,
     source: args.source
   });
 
-  await fs.writeFile(file, touched.buffer);
   console.log(JSON.stringify({
     ok: true,
     file,

@@ -4,7 +4,7 @@ A local web interface for quickly publishing Roblox places with `rbxcloud`.
 
 The app can load places associated with a Universe ID, remembers selected places in the browser, and publishes selected places without making you choose a `.rbxl` file by default.
 
-The default **Roblox asset** source reads the current place asset from Roblox, then passes those downloaded bytes to `rbxcloud experience publish`.
+The default **Roblox asset** source reads the current place asset from Roblox, uses Lune to update a small `ServerStorage` marker instance, then passes those mutated bytes to `rbxcloud experience publish`.
 
 ## Requirements
 
@@ -24,7 +24,7 @@ Download the portable build for your operating system from GitHub Releases, unzi
 - macOS: `Launch Roblox Place Publisher.command`
 - Linux: `launch-roblox-place-publisher.sh`
 
-Portable builds include Node.js and `rbxcloud`, so other developers do not need to install npm or the rbxcloud CLI.
+Portable builds include Node.js, `rbxcloud`, and Lune, so other developers do not need to install npm or Roblox CLI tools.
 
 The launcher opens:
 
@@ -35,13 +35,17 @@ http://127.0.0.1:4173
 ### From Source
 
 Source launches require Node.js 18 or newer.
-They also require `rbxcloud` on `PATH`, or `RBXCLOUD_PATH` pointing to the `rbxcloud` executable.
+They also require:
+
+- `rbxcloud` on `PATH`, or `RBXCLOUD_PATH` pointing to the `rbxcloud` executable.
+- `lune` on `PATH`, or `LUNE_BIN` pointing to the Lune executable.
 
 This repo includes both `aftman.toml` and `foreman.toml` for the tutorial-style Roblox toolchain flow. Use one:
 
 ```bash
 aftman install
 rbxcloud --version
+lune --version
 ```
 
 or:
@@ -49,12 +53,14 @@ or:
 ```bash
 foreman install
 rbxcloud --version
+lune --version
 ```
 
-The pinned tool is:
+The pinned tools are:
 
 ```text
 Sleitnick/rbxcloud@0.17.0
+lune-org/lune@0.10.4
 ```
 
 ```bash
@@ -95,11 +101,11 @@ print(game.GameId)
 For the default no-file flow, the local server:
 
 1. Downloads the current delivered place asset bytes from Roblox Asset Delivery.
-2. Updates a tiny metadata value named `RobloxPlacePublisherTouch`.
+2. Uses Lune to update `ServerStorage.__RobloxPlacePublisher.LastPublishTouch.Value`.
 3. Saves the mutated bytes under `debug-place-files/`.
 4. Runs `rbxcloud experience publish` using that saved debug file.
 
-The metadata touch makes the file bytes change on each publish without editing instance hierarchy or scripts.
+The instance touch makes the file bytes change on each publish by editing a tiny `StringValue` under `ServerStorage`.
 
 The publish command follows the rbxcloud docs:
 
@@ -111,7 +117,7 @@ The API key is supplied to rbxcloud through `RBXCLOUD_API_KEY`, which rbxcloud s
 
 ## Local File Fallback
 
-If you choose **Local file**, the local server receives the uploaded `.rbxl`, updates `RobloxPlacePublisherTouch`, saves it under `debug-place-files/`, then runs:
+If you choose **Local file**, the local server receives the uploaded `.rbxl`, updates `ServerStorage.__RobloxPlacePublisher.LastPublishTouch.Value`, saves it under `debug-place-files/`, then runs:
 
 ```text
 rbxcloud experience publish --filename <temp-file> --place-id <placeId> --universe-id <universeId> --version-type <published|saved>
@@ -132,7 +138,7 @@ Use `latest-place-<placeId>.rbxl` when you want to quickly open the most recent 
 
 The folder is ignored by Git so downloaded place files are not committed accidentally.
 
-The saved file is already touched with the `RobloxPlacePublisherTouch` metadata value, which is the same file that rbxcloud receives.
+The saved file is already touched with the `ServerStorage.__RobloxPlacePublisher.LastPublishTouch` `StringValue`, which is the same file that rbxcloud receives.
 
 ## Command Line
 
@@ -162,8 +168,8 @@ This repo includes `.github/workflows/deploy-place.yml`, which follows the rbxcl
 
 1. Checks out the repo.
 2. Installs Aftman with `ok-nick/setup-aftman`.
-3. Uses `aftman.toml` to install `Sleitnick/rbxcloud@0.17.0`.
-4. Runs `scripts/touch-place-file.mjs` to update `RobloxPlacePublisherTouch`.
+3. Uses `aftman.toml` to install `Sleitnick/rbxcloud@0.17.0` and `lune-org/lune@0.10.4`.
+4. Runs `scripts/touch-place-file.mjs` to update the `ServerStorage` touch `StringValue`.
 5. Runs `rbxcloud experience publish`.
 
 Configure these in **GitHub repository settings > Secrets and variables > Actions**:
@@ -198,13 +204,15 @@ Use **Reset** to clear remembered IDs, remembered token, selected places, select
 
 ```text
 server.js           Local HTTP server, place lookup, and rbxcloud runner
-lib/place-touch.cjs Shared RBXL/RBXLX metadata touch logic
-aftman.toml         Aftman rbxcloud tool pin
-foreman.toml        Foreman rbxcloud tool pin
+lib/place-touch.cjs Shared Lune-backed place touch runner
+aftman.toml         Aftman rbxcloud and Lune tool pins
+foreman.toml        Foreman rbxcloud and Lune tool pins
 .github/workflows/deploy-place.yml
                     GitHub Actions rbxcloud deploy workflow
 scripts/touch-place-file.mjs
                     CLI used by GitHub Actions to touch a place before publish
+scripts/touch-place-file.luau
+                    Lune script that mutates the ServerStorage StringValue
 debug-place-files/ Saved debug copies of place files, ignored by Git
 public/index.html   App markup
 public/styles.css   App styles

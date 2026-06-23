@@ -10,6 +10,7 @@ const CACHE_DIR = path.join(ROOT, ".portable-cache");
 const APP_NAME = "roblox-place-publisher";
 const DEFAULT_TARGETS = ["win-x64", "linux-x64", "macos-x64", "macos-arm64"];
 const RBXCLOUD_VERSION = process.env.RBXCLOUD_VERSION || "0.17.0";
+const LUNE_VERSION = process.env.LUNE_VERSION || "0.10.4";
 
 const TARGETS = {
   "win-x64": {
@@ -18,6 +19,8 @@ const TARGETS = {
     runtimePath: ["node.exe"],
     rbxcloudPackage: `rbxcloud-${RBXCLOUD_VERSION}-win64.zip`,
     rbxcloudBinary: "rbxcloud.exe",
+    lunePackage: `lune-${LUNE_VERSION}-windows-x86_64.zip`,
+    luneBinary: "lune.exe",
     launcherName: "Launch Roblox Place Publisher.cmd",
     launcher: windowsLauncher
   },
@@ -27,6 +30,8 @@ const TARGETS = {
     runtimePath: ["bin", "node"],
     rbxcloudPackage: `rbxcloud-${RBXCLOUD_VERSION}-linux.zip`,
     rbxcloudBinary: "rbxcloud",
+    lunePackage: `lune-${LUNE_VERSION}-linux-x86_64.zip`,
+    luneBinary: "lune",
     launcherName: "launch-roblox-place-publisher.sh",
     launcher: unixLauncher
   },
@@ -36,6 +41,8 @@ const TARGETS = {
     runtimePath: ["bin", "node"],
     rbxcloudPackage: `rbxcloud-${RBXCLOUD_VERSION}-macos.zip`,
     rbxcloudBinary: "rbxcloud",
+    lunePackage: `lune-${LUNE_VERSION}-macos-x86_64.zip`,
+    luneBinary: "lune",
     launcherName: "Launch Roblox Place Publisher.command",
     launcher: unixLauncher
   },
@@ -45,6 +52,8 @@ const TARGETS = {
     runtimePath: ["bin", "node"],
     rbxcloudPackage: `rbxcloud-${RBXCLOUD_VERSION}-macos-aarch64.zip`,
     rbxcloudBinary: "rbxcloud",
+    lunePackage: `lune-${LUNE_VERSION}-macos-aarch64.zip`,
+    luneBinary: "lune",
     launcherName: "Launch Roblox Place Publisher.command",
     launcher: unixLauncher
   }
@@ -253,6 +262,7 @@ async function copyAppFiles(appDir) {
   await fs.copyFile(path.join(ROOT, "README.md"), path.join(appDir, "README.md"));
   await fs.cp(path.join(ROOT, "public"), path.join(appDir, "public"), { recursive: true });
   await fs.cp(path.join(ROOT, "lib"), path.join(appDir, "lib"), { recursive: true });
+  await fs.cp(path.join(ROOT, "scripts"), path.join(appDir, "scripts"), { recursive: true });
 }
 
 async function copyRuntime(nodeRoot, packageDir, targetConfig) {
@@ -274,7 +284,7 @@ async function copyRuntime(nodeRoot, packageDir, targetConfig) {
   }
 }
 
-async function findExtractedRbxcloud(extractDir, binaryName) {
+async function findExtractedBinary(extractDir, binaryName) {
   const entries = await fs.readdir(extractDir, { withFileTypes: true });
 
   for (const entry of entries) {
@@ -285,7 +295,7 @@ async function findExtractedRbxcloud(extractDir, binaryName) {
     }
 
     if (entry.isDirectory()) {
-      const nested = await findExtractedRbxcloud(entryPath, binaryName);
+      const nested = await findExtractedBinary(entryPath, binaryName);
 
       if (nested) {
         return nested;
@@ -307,7 +317,7 @@ async function copyRbxcloud(packageDir, targetConfig) {
   await downloadFile(archiveUrl, archivePath);
   await extractArchive(archivePath, extractDir);
 
-  const sourceBinary = await findExtractedRbxcloud(extractDir, targetConfig.rbxcloudBinary);
+  const sourceBinary = await findExtractedBinary(extractDir, targetConfig.rbxcloudBinary);
 
   if (!sourceBinary) {
     throw new Error(`Unable to find ${targetConfig.rbxcloudBinary} in ${archiveName}`);
@@ -321,12 +331,38 @@ async function copyRbxcloud(packageDir, targetConfig) {
   }
 }
 
+async function copyLune(packageDir, targetConfig) {
+  const archiveName = targetConfig.lunePackage;
+  const archiveUrl = `https://github.com/lune-org/lune/releases/download/v${LUNE_VERSION}/${archiveName}`;
+  const archivePath = path.join(CACHE_DIR, archiveName);
+  const extractDir = path.join(CACHE_DIR, `${archiveName}-extract`);
+  const toolsDir = path.join(packageDir, "tools");
+  const targetBinary = path.join(toolsDir, targetConfig.luneBinary);
+
+  await downloadFile(archiveUrl, archivePath);
+  await extractArchive(archivePath, extractDir);
+
+  const sourceBinary = await findExtractedBinary(extractDir, targetConfig.luneBinary);
+
+  if (!sourceBinary) {
+    throw new Error(`Unable to find ${targetConfig.luneBinary} in ${archiveName}`);
+  }
+
+  await fs.mkdir(toolsDir, { recursive: true });
+  await fs.copyFile(sourceBinary, targetBinary);
+
+  if (!targetConfig.luneBinary.endsWith(".exe")) {
+    await fs.chmod(targetBinary, 0o755);
+  }
+}
+
 async function writePortableReadme(packageDir, target, nodeVersion) {
   const text = `Roblox Place Publisher portable build
 
 Target: ${target}
 Bundled Node.js: ${nodeVersion}
 Bundled rbxcloud: ${RBXCLOUD_VERSION}
+Bundled Lune: ${LUNE_VERSION}
 
 Run the launcher in this folder. It starts a local server and opens:
 
@@ -336,6 +372,7 @@ Close the terminal window to stop the app.
 
 No Node.js or npm install is required on this machine.
 No separate rbxcloud install is required for this portable build.
+No separate Lune install is required for this portable build.
 `;
 
   await fs.writeFile(path.join(packageDir, "README-PORTABLE.txt"), text);
@@ -394,6 +431,7 @@ async function buildTarget(target, nodeVersion) {
   await copyAppFiles(path.join(packageDir, "app"));
   await copyRuntime(nodeRoot, packageDir, targetConfig);
   await copyRbxcloud(packageDir, targetConfig);
+  await copyLune(packageDir, targetConfig);
   await writeLauncher(packageDir, targetConfig);
   await writePortableReadme(packageDir, target, nodeVersion);
   await archivePackage(packageDir, outputZip);

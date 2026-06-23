@@ -1,2 +1,3 @@
 [tools]
 rbxcloud = { source = "Sleitnick/rbxcloud", version = "0.17.0" }
+lune = { source = "lune-org/lune", version = "0.10.4" }

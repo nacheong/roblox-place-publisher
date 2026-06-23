@@ -29,6 +29,7 @@ on:
       - "**/*.rbxl"
       - "lib/place-touch.cjs"
       - "scripts/touch-place-file.mjs"
+      - "scripts/touch-place-file.luau"
 
 permissions:
   contents: read

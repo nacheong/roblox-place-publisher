@@ -194,7 +194,7 @@ function buildCurl() {
     return `${prefix}${[
       "# App no-file workflow:",
       "# The local server downloads the current Roblox place file through Asset Delivery, then runs:",
-      "# 1. Update RobloxPlacePublisherTouch metadata",
+      "# 1. Update ServerStorage.__RobloxPlacePublisher.LastPublishTouch.Value",
       "# 2. Save the touched debug .rbxl",
       "# 3. Publish with rbxcloud",
       "rbxcloud experience publish \\",
@@ -561,7 +561,7 @@ function updatePublishSourceUi() {
       els.fileMeta.textContent = ".rbxl from Studio";
     }
   } else {
-    els.sourceHint.textContent = "No file picker: downloads the current place file, touches RobloxPlacePublisherTouch metadata, then republishes it.";
+    els.sourceHint.textContent = "No file picker: downloads the current place file, updates a tiny ServerStorage StringValue, then republishes it.";
     els.fileMeta.textContent = "Asset Delivery source selected.";
   }
 }

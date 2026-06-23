@@ -4,7 +4,7 @@ const http = require("node:http");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { URL } = require("node:url");
-const { touchPlaceBuffer } = require("./lib/place-touch.cjs");
+const { touchPlaceFile } = require("./lib/place-touch.cjs");
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 4173);
@@ -237,7 +237,6 @@ async function saveDebugPlaceFile({ placeId, buffer, fileExtension }) {
   const latestFile = path.join(DEBUG_PLACE_DIR, `latest-place-${placeId}${extension}`);
 
   await fsp.writeFile(debugFile, buffer);
-  await fsp.writeFile(latestFile, buffer);
 
   return {
     debugFile,
@@ -493,10 +492,17 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
     };
   }
 
+  const { debugFile, latestDebugFile } = await saveDebugPlaceFile({
+    placeId,
+    buffer,
+    fileExtension
+  });
+
   let touched;
 
   try {
-    touched = touchPlaceBuffer(buffer, {
+    touched = await touchPlaceFile({
+      file: debugFile,
       placeId,
       universeId,
       versionType,
@@ -512,17 +518,15 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
       command: "rbxcloud experience publish",
       versionType,
       originalFilename,
+      debugFile,
+      debugDirectory: DEBUG_PLACE_DIR,
       contentBytes: buffer.length,
       message: error instanceof Error ? error.message : "Unable to mutate place file before publishing."
     };
   }
 
-  const mutatedBuffer = touched.buffer;
-  const { debugFile, latestDebugFile } = await saveDebugPlaceFile({
-    placeId,
-    buffer: mutatedBuffer,
-    fileExtension
-  });
+  await fsp.copyFile(debugFile, latestDebugFile);
+  const mutatedStats = await fsp.stat(debugFile);
 
   const result = await runRbxcloudPublish({
     command,
@@ -546,7 +550,7 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
     debugDirectory: DEBUG_PLACE_DIR,
     mutation: touched.mutation,
     originalContentBytes: buffer.length,
-    contentBytes: mutatedBuffer.length
+    contentBytes: mutatedStats.size
   };
 }
 
