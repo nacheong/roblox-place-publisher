@@ -150,6 +150,11 @@
                 <span>Remember token</span>
               </label>
 
+              <label class="toggle">
+                <input id="debugPlaces" type="checkbox">
+                <span>Debug places</span>
+              </label>
+
               <div class="checks" aria-label="Request facts">
                 <span>rbxcloud</span>
                 <span>Asset Delivery</span>
@@ -207,6 +212,10 @@
             <div class="panel-heading compact">
               <h2 id="response-title">Response</h2>
               <div class="response-actions">
+                <button class="panel-action" id="retryFailed" type="button" title="Retry failed places" aria-label="Retry failed places" hidden disabled>
+                  <i data-lucide="refresh-cw"></i>
+                  <span>Retry failed</span>
+                </button>
                 <button class="panel-action danger" id="clearDebug" type="button" title="Clear debug place files" aria-label="Clear debug place files">
                   <i data-lucide="trash-2"></i>
                   <span>Clear debug</span>

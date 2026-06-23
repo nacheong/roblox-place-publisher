@@ -249,6 +249,20 @@ async function saveDebugPlaceFile({ placeId, buffer, fileExtension }) {
   };
 }
 
+async function removeFileIfExists(filePath) {
+  if (!filePath) {
+    return;
+  }
+
+  try {
+    await fsp.unlink(filePath);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
 function getDebugPlacePaths({ placeId, fileExtension }) {
   const extension = fileExtension || ".rbxl";
   const timestamp = timestampForFilename();
@@ -319,6 +333,7 @@ function validatePublishRequest(req, searchParams) {
   const fileExtension = getPlaceFileExtension(originalFilename);
   const contentLength = req.headers["content-length"];
   const packageOptions = parsePackagePublishHeaders(req);
+  const saveDebugPlaces = parseSaveDebugPlacesHeader(req);
 
   const errors = [];
 
@@ -355,6 +370,7 @@ function validatePublishRequest(req, searchParams) {
     versionType,
     originalFilename,
     fileExtension,
+    saveDebugPlaces,
     packageSourcePlaceId: packageOptions.packageSourcePlaceId,
     packageKeys: packageOptions.packageKeys,
     errors
@@ -367,6 +383,7 @@ function validateAssetPublishRequest(req, searchParams) {
   const placeId = (searchParams.get("placeId") || "").trim();
   const versionType = (searchParams.get("versionType") || "published").trim().toLowerCase();
   const packageOptions = parsePackagePublishHeaders(req);
+  const saveDebugPlaces = parseSaveDebugPlacesHeader(req);
   const errors = [];
 
   if (!apiKey || Array.isArray(apiKey)) {
@@ -392,10 +409,18 @@ function validateAssetPublishRequest(req, searchParams) {
     universeId,
     placeId,
     versionType,
+    saveDebugPlaces,
     packageSourcePlaceId: packageOptions.packageSourcePlaceId,
     packageKeys: packageOptions.packageKeys,
     errors
   };
+}
+
+function parseSaveDebugPlacesHeader(req) {
+  const rawValue = req.headers["x-save-debug-place"];
+  const value = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+
+  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
 function parsePackagePublishHeaders(req) {
@@ -613,7 +638,7 @@ async function handlePackages(req, res, requestUrl) {
   }
 }
 
-async function publishToRoblox({ apiKey, universeId, placeId, versionType, originalFilename, fileExtension, body, source, packageSourcePlaceId, packageKeys }) {
+async function publishToRoblox({ apiKey, universeId, placeId, versionType, originalFilename, fileExtension, body, source, saveDebugPlaces, packageSourcePlaceId, packageKeys }) {
   const command = resolveRbxcloudCommand();
 
   if (!command) {
@@ -667,7 +692,7 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
       packageKeys
     });
   } catch (error) {
-    return {
+    const failure = {
       ok: false,
       status: 422,
       statusText: "Mutation failed",
@@ -676,17 +701,30 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
       command: "rbxcloud experience publish",
       versionType,
       originalFilename,
-      debugFile,
-      debugDirectory: DEBUG_PLACE_DIR,
+      ...(saveDebugPlaces ? {
+        debugFile,
+        debugDirectory: DEBUG_PLACE_DIR
+      } : {
+        debugSaved: false
+      }),
       contentBytes: buffer.length,
       packageSourcePlaceId,
       packageUpdates: error?.payload?.packageUpdates,
       packages: error?.payload?.packages,
       message: error instanceof Error ? error.message : "Unable to mutate place file before publishing."
     };
+
+    if (!saveDebugPlaces) {
+      await removeFileIfExists(debugFile).catch(() => {});
+    }
+
+    return failure;
   }
 
-  await fsp.copyFile(debugFile, latestDebugFile);
+  if (saveDebugPlaces) {
+    await fsp.copyFile(debugFile, latestDebugFile);
+  }
+
   const mutatedStats = await fsp.stat(debugFile);
 
   const result = await runRbxcloudPublish({
@@ -697,6 +735,20 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
     versionType,
     filename: debugFile
   });
+  const debugFields = saveDebugPlaces
+    ? {
+      rbxcloudFilename: debugFile,
+      debugFile,
+      latestDebugFile,
+      debugDirectory: DEBUG_PLACE_DIR
+    }
+    : {
+      debugSaved: false
+    };
+
+  if (!saveDebugPlaces) {
+    await removeFileIfExists(debugFile).catch(() => {});
+  }
 
   return {
     ...result,
@@ -705,10 +757,7 @@ async function publishToRoblox({ apiKey, universeId, placeId, versionType, origi
     command: "rbxcloud experience publish",
     versionType,
     originalFilename,
-    rbxcloudFilename: debugFile,
-    debugFile,
-    latestDebugFile,
-    debugDirectory: DEBUG_PLACE_DIR,
+    ...debugFields,
     mutation: touched.mutation,
     packageSourcePlaceId: touched.packageSourcePlaceId,
     packageUpdates: touched.packageUpdates,
@@ -805,7 +854,7 @@ async function applyPublishedVerification({ result, apiKey, placeId, versionType
   };
 }
 
-async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, versionType, packageSourcePlaceId, packageKeys }) {
+async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, versionType, saveDebugPlaces, packageSourcePlaceId, packageKeys }) {
   const command = resolveRbxcloudCommand();
   const originalFilename = `place-${placeId}.rbxl`;
 
@@ -847,7 +896,7 @@ async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, version
   } catch (error) {
     const payload = error?.payload || {};
 
-    return {
+    const failure = {
       ok: false,
       status: payload.status || 422,
       statusText: payload.statusText || "Lune download/mutation failed",
@@ -857,8 +906,12 @@ async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, version
       versionType,
       originalFilename,
       source: "robloxAsset",
-      debugFile,
-      debugDirectory: DEBUG_PLACE_DIR,
+      ...(saveDebugPlaces ? {
+        debugFile,
+        debugDirectory: DEBUG_PLACE_DIR
+      } : {
+        debugSaved: false
+      }),
       assetDeliveryEndpoint: payload.assetDeliveryEndpoint,
       packageSourcePlaceId,
       packageUpdates: payload.packageUpdates,
@@ -866,9 +919,18 @@ async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, version
       body: payload.body,
       message: error instanceof Error ? error.message : "Unable to download and mutate place file before publishing."
     };
+
+    if (!saveDebugPlaces) {
+      await removeFileIfExists(debugFile).catch(() => {});
+    }
+
+    return failure;
   }
 
-  await fsp.copyFile(debugFile, latestDebugFile);
+  if (saveDebugPlaces) {
+    await fsp.copyFile(debugFile, latestDebugFile);
+  }
+
   const mutatedStats = await fsp.stat(debugFile);
 
   const publishResult = await runRbxcloudPublish({
@@ -886,6 +948,20 @@ async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, version
     versionType,
     expectedValue: touched.mutation?.value
   });
+  const debugFields = saveDebugPlaces
+    ? {
+      rbxcloudFilename: debugFile,
+      debugFile,
+      latestDebugFile,
+      debugDirectory: DEBUG_PLACE_DIR
+    }
+    : {
+      debugSaved: false
+    };
+
+  if (!saveDebugPlaces) {
+    await removeFileIfExists(debugFile).catch(() => {});
+  }
 
   return {
     ...result,
@@ -894,10 +970,7 @@ async function publishRobloxAssetToRoblox({ apiKey, universeId, placeId, version
     command: "rbxcloud experience publish",
     versionType,
     originalFilename,
-    rbxcloudFilename: debugFile,
-    debugFile,
-    latestDebugFile,
-    debugDirectory: DEBUG_PLACE_DIR,
+    ...debugFields,
     source: "robloxAsset",
     assetDeliveryEndpoint: touched.download?.assetDeliveryEndpoint,
     downloadLocation: touched.download?.downloadLocation,
@@ -935,6 +1008,7 @@ async function handlePublish(req, res, requestUrl) {
       fileExtension: validation.fileExtension,
       body: req,
       source: "localFile",
+      saveDebugPlaces: validation.saveDebugPlaces,
       packageSourcePlaceId: validation.packageSourcePlaceId,
       packageKeys: validation.packageKeys
     });
@@ -970,6 +1044,7 @@ async function handlePublishAsset(req, res, requestUrl) {
       universeId: validation.universeId,
       placeId: validation.placeId,
       versionType: validation.versionType,
+      saveDebugPlaces: validation.saveDebugPlaces,
       packageSourcePlaceId: validation.packageSourcePlaceId,
       packageKeys: validation.packageKeys
     });

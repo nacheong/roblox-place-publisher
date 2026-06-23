@@ -739,10 +739,15 @@ select:focus,
 .response-summary {
   display: grid;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fbfcfe;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .response-summary.success {
@@ -762,7 +767,11 @@ select:focus,
 
 .response-summary h3,
 .response-summary p {
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .response-summary h3 {
@@ -779,6 +788,7 @@ select:focus,
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 8px;
+  min-width: 0;
   max-height: 240px;
   overflow: auto;
 }
@@ -786,11 +796,16 @@ select:focus,
 .publish-result {
   display: grid;
   gap: 5px;
+  min-width: 0;
+  max-width: 100%;
   min-height: 104px;
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #ffffff;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .publish-result.success {
@@ -806,7 +821,11 @@ select:focus,
 .publish-result strong,
 .publish-result span,
 .publish-result code {
+  min-width: 0;
+  max-width: 100%;
   overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .publish-result strong {

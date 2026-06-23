@@ -93,8 +93,9 @@ npm start
    - Select the final target places to publish. Targets that do not already have that package at the same path are skipped.
 6. Leave **Publish source** on **Roblox asset** for no-file publishing.
 7. Choose `Published` or `Saved`.
-8. Review the generated rbxcloud workflow preview.
-9. Click **Publish**.
+8. Optional: enable **Debug places** if you want to keep the exact `.rbxl` files passed to rbxcloud.
+9. Review the generated rbxcloud workflow preview.
+10. Click **Publish**.
 
 You can get IDs from the Roblox Studio command bar:
 
@@ -115,6 +116,8 @@ For the default no-file flow, the local server asks Lune to:
 The instance touch makes the file bytes change on each publish by editing a tiny `StringValue` under `ServerStorage`.
 If rbxcloud accepts the publish but the re-downloaded place does not contain the expected value, the app reports **Publish not verified** instead of a clean success.
 Publish results also include a `StarterGui.JaxonGui` package probe with its `PackageLink.VersionNumber`, `PackageId`, `AutoUpdate`, and status when those fields are available. If `VersionNumber` is not readable from the downloaded place file, the raw response includes the read error.
+
+If a batch has failures, use **Retry failed** in the Response panel to retry only the failed place IDs with the current API key and publish settings.
 
 ## Package Replacement Flow
 
@@ -146,7 +149,7 @@ When multiple places are selected in **Local file** mode, the same `.rbxl` file 
 
 ## Debug Place Files
 
-Every publish attempt saves the exact `.rbxl` bytes passed to rbxcloud:
+Enable **Debug places** when you want every publish attempt to keep the exact `.rbxl` bytes passed to rbxcloud:
 
 ```text
 debug-place-files/place-<placeId>-<timestamp>.rbxl
@@ -154,6 +157,8 @@ debug-place-files/latest-place-<placeId>.rbxl
 ```
 
 Use `latest-place-<placeId>.rbxl` when you want to quickly open the most recent pulled copy in Studio and check whether package updates are actually present.
+
+The toggle is off by default. When it is off, the app still creates a temporary `.rbxl` because rbxcloud requires a filename, but deletes that temporary file after the publish attempt.
 
 The folder is ignored by Git so downloaded place files are not committed accidentally.
 
@@ -219,7 +224,7 @@ Use **Remember token** to store the API key locally in this browser's `localStor
 
 This is convenient for a local workflow, but it is not encrypted. Avoid using it on shared machines.
 
-Use **Reset** to clear remembered IDs, remembered token, selected places, indexed package selections, selected file state, and response output.
+Use **Reset** to clear remembered IDs, remembered token, selected places, indexed package selections, debug preference, selected file state, and response output.
 
 ## Project Structure
 

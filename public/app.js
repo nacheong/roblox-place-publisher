@@ -21,6 +21,7 @@ const els = {
   fileMeta: document.querySelector("#fileMeta"),
   rememberIds: document.querySelector("#rememberIds"),
   rememberToken: document.querySelector("#rememberToken"),
+  debugPlaces: document.querySelector("#debugPlaces"),
   formErrors: document.querySelector("#formErrors"),
   publishButton: document.querySelector("#publishButton"),
   copyCurl: document.querySelector("#copyCurl"),
@@ -34,6 +35,7 @@ const els = {
   responseEmpty: document.querySelector("#responseEmpty"),
   responseBrief: document.querySelector("#responseBrief"),
   responseOutput: document.querySelector("#responseOutput"),
+  retryFailed: document.querySelector("#retryFailed"),
   clearDebug: document.querySelector("#clearDebug"),
   dashboardLink: document.querySelector("#dashboardLink")
 };
@@ -52,6 +54,7 @@ let selectedPackageKeys = new Set();
 let savedPackageSelectionsBySource = {};
 let savedPackagesBySource = {};
 let isIndexingPackages = false;
+let lastPublishPayload = null;
 
 function getVersionType() {
   return document.querySelector("input[name='versionType']:checked")?.value || "published";
@@ -63,6 +66,10 @@ function getPublishSource() {
 
 function getVersionAction() {
   return getVersionType() === "saved" ? "saved" : "published";
+}
+
+function shouldSaveDebugPlaces() {
+  return Boolean(els.debugPlaces?.checked);
 }
 
 function isRbxlFile(file) {
@@ -259,6 +266,9 @@ function buildCurl() {
   const placeId = previewPlaceId || "{placeId}";
   const versionType = getVersionType();
   const prefix = targets.length > 1 ? `# Repeat for selected Place IDs: ${targets.join(", ")}\n` : "";
+  const debugLine = shouldSaveDebugPlaces()
+    ? "# Debug places enabled: keep the exact .rbxl passed to rbxcloud"
+    : "# Debug places disabled: use a temporary .rbxl and delete it after publish";
   const packageKeys = getSelectedPackageKeys();
   const packageSource = packageKeys.length > 0 && indexedPackageSourcePlaceId
     ? [
@@ -275,7 +285,8 @@ function buildCurl() {
       packageSource,
       "# 2. Lune updates selected package roots when the target already has them",
       "# 3. Lune updates ServerStorage.__RobloxPlacePublisher.LastPublishTouch.Value",
-      "# 4. Lune saves the touched debug .rbxl",
+      debugLine,
+      "# 4. Lune saves the touched .rbxl for rbxcloud",
       "# 5. Publish with rbxcloud",
       "rbxcloud experience publish \\",
       "  --filename \"<downloaded-place>.rbxl\" \\",
@@ -304,16 +315,18 @@ function saveSettings() {
   rememberCurrentPlaces();
   const hasSavedPlaces = Object.keys(savedPlacesByUniverse).length > 0 || Object.keys(savedPlaceSelections).length > 0;
   const hasSavedPackages = Object.keys(savedPackagesBySource).length > 0 || Object.keys(savedPackageSelectionsBySource).length > 0;
+  const hasDebugPreference = shouldSaveDebugPlaces();
 
-  if (!rememberIds && !rememberToken && !hasSavedPlaces && !hasSavedPackages) {
+  if (!rememberIds && !rememberToken && !hasSavedPlaces && !hasSavedPackages && !hasDebugPreference) {
     localStorage.removeItem(STORAGE_KEY);
     return;
   }
 
   const settings = {
-    settingsVersion: 7,
+    settingsVersion: 8,
     versionType: getVersionType(),
     publishSource: getPublishSource(),
+    debugPlaces: shouldSaveDebugPlaces(),
     rememberIds,
     rememberToken,
     placeSelectionsByUniverse: savedPlaceSelections,
@@ -357,6 +370,7 @@ function loadSettings() {
     els.placeId.value = settings.rememberIds ? settings.placeId || "" : "";
     els.rememberIds.checked = Boolean(settings.rememberIds);
     els.rememberToken.checked = Boolean(settings.rememberToken);
+    els.debugPlaces.checked = Boolean(settings.debugPlaces);
 
     if (settings.rememberToken) {
       els.apiKey.value = settings.apiKey || "";
@@ -640,6 +654,28 @@ function formatFailureSummary(failure) {
   return `${placeText}: ${failure.title}. ${failure.detail}${example}`;
 }
 
+function getFailedPublishTargets(payload = lastPublishPayload) {
+  const results = Array.isArray(payload?.results) ? payload.results : [];
+
+  return results
+    .filter((result) => !result.ok && result.placeId)
+    .map((result) => String(result.placeId));
+}
+
+function updateRetryFailedButton(payload = lastPublishPayload) {
+  const failedTargets = getFailedPublishTargets(payload);
+  const hasFailures = failedTargets.length > 0;
+
+  els.retryFailed.hidden = !hasFailures;
+  els.retryFailed.disabled = !hasFailures || isPublishing || isFetchingPlaces || isIndexingPackages;
+
+  if (hasFailures) {
+    els.retryFailed.querySelector("span").textContent = `Retry ${failedTargets.length} failed`;
+  } else {
+    els.retryFailed.querySelector("span").textContent = "Retry failed";
+  }
+}
+
 function renderResponseBrief(payload, tone) {
   els.responseBrief.replaceChildren();
 
@@ -747,10 +783,12 @@ function renderResponseBrief(payload, tone) {
 }
 
 function setResponse(payload, tone) {
+  lastPublishPayload = payload && Array.isArray(payload.results) ? payload : null;
   els.responseEmpty.hidden = true;
   renderResponseBrief(payload, tone);
   els.responseOutput.hidden = false;
   els.responseOutput.textContent = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
+  updateRetryFailedButton(payload);
 
   if (tone === "success") {
     els.responseOutput.style.borderColor = "#a9dec9";
@@ -768,13 +806,13 @@ function updatePublishSourceUi() {
   els.fileZone.classList.toggle("hidden", !isFileSource);
 
   if (isFileSource) {
-    els.sourceHint.textContent = "Fallback: upload an explicit .rbxl file from disk.";
+    els.sourceHint.textContent = "Fallback: upload an explicit .rbxl file from disk. Debug places controls whether the mutated publish file is kept afterward.";
 
     if (!selectedFile) {
       els.fileMeta.textContent = ".rbxl from Studio";
     }
   } else {
-    els.sourceHint.textContent = "No file picker: Lune downloads the current place file, updates a tiny ServerStorage StringValue, then rbxcloud republishes it.";
+    els.sourceHint.textContent = "No file picker: Lune downloads the current place file, mutates it, then rbxcloud republishes it. Debug places controls whether the local .rbxl is kept.";
     els.fileMeta.textContent = "Asset Delivery source selected.";
   }
 }
@@ -1093,11 +1131,11 @@ function updatePackageControls() {
   }
 }
 
-function validate(showErrors = false) {
+function validate(showErrors = false, targetOverride = null) {
   const errors = [];
   const universeId = els.universeId.value.trim();
   const manualPlaceId = els.placeId.value.trim();
-  const targets = getPublishTargets();
+  const targets = Array.isArray(targetOverride) ? targetOverride : getPublishTargets();
   const isFileSource = getPublishSource() === "file";
   const packageKeys = getSelectedPackageKeys();
 
@@ -1134,6 +1172,7 @@ function validate(showErrors = false) {
   els.formErrors.classList.toggle("visible", showErrors && errors.length > 0);
 
   updatePackageControls();
+  updateRetryFailedButton();
   updatePreview();
   saveSettings();
 
@@ -1146,7 +1185,13 @@ function updatePreview() {
   const source = getPublishSource();
 
   els.endpointText.textContent = endpoint.includes("{selectedPlaceId}") ? "rbxcloud workflow for selected places" : endpoint || "Waiting for IDs";
-  els.fileText.textContent = source === "asset" ? "Lune debug .rbxl" : selectedFile ? selectedFile.name : "Waiting for .rbxl";
+  els.fileText.textContent = source === "asset"
+    ? shouldSaveDebugPlaces()
+      ? "Saved debug .rbxl"
+      : "Temporary .rbxl"
+    : selectedFile
+      ? selectedFile.name
+      : "Waiting for .rbxl";
   els.sourceText.textContent = source === "asset"
     ? "Lune Asset Delivery copy"
     : targets.length > 1
@@ -1196,10 +1241,11 @@ function updateFile(file) {
   validate(false);
 }
 
-async function publishPlace() {
-  const errors = validate(true);
-  const targets = getPublishTargets();
+async function publishPlace(options = {}) {
+  const targets = Array.isArray(options.targets) ? options.targets : getPublishTargets();
+  const errors = validate(true, targets);
   const source = getPublishSource();
+  const retryOnly = Boolean(options.retryOnly);
 
   if (errors.length > 0 || (source === "file" && !selectedFile) || targets.length === 0) {
     setStatus("Check fields", "warning");
@@ -1208,10 +1254,11 @@ async function publishPlace() {
 
   isPublishing = true;
   els.publishButton.disabled = true;
-  setStatus("Publishing", "warning");
+  updateRetryFailedButton();
+  setStatus(retryOnly ? "Retrying" : "Publishing", "warning");
   setResponse(source === "asset"
-    ? `Lune downloading, touching, and publishing ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`
-    : `Touching and publishing ${selectedFile.name} to ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`, "neutral");
+    ? `Lune downloading, touching, and ${retryOnly ? "retrying" : "publishing"} ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`
+    : `Touching and ${retryOnly ? "retrying" : "publishing"} ${selectedFile.name} to ${targets.length} place${targets.length === 1 ? "" : "s"} with rbxcloud...`, "neutral");
 
   const results = [];
 
@@ -1220,7 +1267,8 @@ async function publishPlace() {
 
     try {
       const headers = {
-        "x-api-key": els.apiKey.value.trim()
+        "x-api-key": els.apiKey.value.trim(),
+        "x-save-debug-place": shouldSaveDebugPlaces() ? "1" : "0"
       };
       const packageKeys = getSelectedPackageKeys();
 
@@ -1273,6 +1321,8 @@ async function publishPlace() {
     source,
     file: source === "file" ? selectedFile.name : null,
     versionType: getVersionType(),
+    retryOnly,
+    debugPlaces: shouldSaveDebugPlaces(),
     packageSourcePlaceId: indexedPackageSourcePlaceId || null,
     selectedPackages: getSelectedPackageKeys().length,
     targets: results.length,
@@ -1282,6 +1332,20 @@ async function publishPlace() {
 
   isPublishing = false;
   validate(false);
+}
+
+async function retryFailedPlaces() {
+  const targets = getFailedPublishTargets();
+
+  if (targets.length === 0) {
+    updateRetryFailedButton();
+    return;
+  }
+
+  await publishPlace({
+    targets,
+    retryOnly: true
+  });
 }
 
 async function clearDebugPlaces() {
@@ -1326,6 +1390,8 @@ function resetForm() {
   els.fileInput.value = "";
   els.responseOutput.hidden = true;
   els.responseBrief.hidden = true;
+  lastPublishPayload = null;
+  updateRetryFailedButton();
   els.responseBrief.replaceChildren();
   els.responseEmpty.hidden = false;
   els.responseOutput.textContent = "";
@@ -1402,9 +1468,10 @@ function bindEvents() {
   });
 
   els.resetForm.addEventListener("click", resetForm);
+  els.retryFailed.addEventListener("click", retryFailedPlaces);
   els.clearDebug.addEventListener("click", clearDebugPlaces);
 
-  [els.apiKey, els.universeId, els.placeId, els.rememberIds, els.rememberToken].forEach((element) => {
+  [els.apiKey, els.universeId, els.placeId, els.rememberIds, els.rememberToken, els.debugPlaces].forEach((element) => {
     element.addEventListener("input", () => {
       if (element === els.universeId && lastFetchedUniverseId && els.universeId.value.trim() !== lastFetchedUniverseId) {
         const universeId = els.universeId.value.trim();
