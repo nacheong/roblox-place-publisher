@@ -1,0 +1,2 @@
+[tools]
+rbxcloud = { source = "Sleitnick/rbxcloud", version = "0.17.0" }

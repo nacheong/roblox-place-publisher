@@ -38,6 +38,26 @@ http://127.0.0.1:4173
 Source launches require Node.js 18 or newer.
 They also require `rbxcloud` on `PATH`, or `RBXCLOUD_PATH` pointing to the `rbxcloud` executable.
 
+This repo includes both `aftman.toml` and `foreman.toml` for the tutorial-style Roblox toolchain flow. Use one:
+
+```bash
+aftman install
+rbxcloud --version
+```
+
+or:
+
+```bash
+foreman install
+rbxcloud --version
+```
+
+The pinned tool is:
+
+```text
+Sleitnick/rbxcloud@0.17.0
+```
+
 ```bash
 npm start
 ```
@@ -66,6 +86,13 @@ npm start
 7. Review the generated rbxcloud workflow preview.
 8. Click **Publish**.
 
+You can get IDs from the Roblox Studio command bar:
+
+```lua
+print(game.PlaceId)
+print(game.GameId)
+```
+
 For the default no-file flow, the local server:
 
 1. Runs `rbxcloud assets get --asset-id <placeId>` to read asset metadata.
@@ -91,6 +118,28 @@ rbxcloud experience publish --filename <temp-file> --place-id <placeId> --univer
 
 When multiple places are selected in **Local file** mode, the same `.rbxl` file is published to every selected Place ID.
 
+## Command Line
+
+The direct command-line publish flow from the tutorial is:
+
+```bash
+rbxcloud experience publish \
+  --filename myplace.rbxl \
+  --place-id 12345 \
+  --universe-id 98765 \
+  --version-type published \
+  --api-key "$ROBLOX_API_KEY"
+```
+
+Use `saved` for `--version-type` if you only want Studio's saved version updated; use `published` to update the live game.
+
+In PowerShell, you can keep the key out of shell history:
+
+```powershell
+$env:RBXCLOUD_API_KEY = "RBX-..."
+rbxcloud experience publish --filename .\myplace.rbxl --place-id 12345 --universe-id 98765 --version-type published
+```
+
 ## Token Storage
 
 Use **Remember token** to store the API key locally in this browser's `localStorage`.
@@ -103,6 +152,8 @@ Use **Reset** to clear remembered IDs, remembered token, selected places, select
 
 ```text
 server.js           Local HTTP server, place lookup, and rbxcloud runner
+aftman.toml         Aftman rbxcloud tool pin
+foreman.toml        Foreman rbxcloud tool pin
 public/index.html   App markup
 public/styles.css   App styles
 public/app.js       Client-side validation, storage, and publish flow
